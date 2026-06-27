@@ -1,0 +1,48 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        "simulator": false
+      },
+      "env": {
+        "EXPO_PUBLIC_CHAT_URL": "https://bb-server-production-a849.up.railway.app",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://djskxjjioklsvusgzfeu.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_B6tSNseYclLgC-kxliZjwA_HYQsclBK"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "ios": {
+        "simulator": false
+      },
+      "env": {
+        "EXPO_PUBLIC_CHAT_URL": "https://bb-server-production-a849.up.railway.app",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://djskxjjioklsvusgzfeu.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_B6tSNseYclLgC-kxliZjwA_HYQsclBK"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_CHAT_URL": "https://bb-server-production-a849.up.railway.app",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://djskxjjioklsvusgzfeu.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_B6tSNseYclLgC-kxliZjwA_HYQsclBK"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appleId": "mike@strangepair.com",
+        "ascAppId": "6783896393",
+        "appleTeamId": "X4LA4J2669"
+      }
+    }
+  }
+}

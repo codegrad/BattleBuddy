@@ -1,0 +1,54 @@
+{
+  "expo": {
+    "name": "BattleBuddy",
+    "slug": "battlebuddy",
+    "scheme": "battlebuddy",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0A0A"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.strangepair.battlebuddy",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "BattleBuddy needs microphone access for voice conversations with your buddy.",
+        "NSCameraUsageDescription": "BattleBuddy does not use the camera.",
+        "UIBackgroundModes": [
+          "audio"
+        ],
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "package": "com.strangepair.battlebuddy",
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      "expo-secure-store",
+      "@react-native-community/datetimepicker"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "f4d41901-f6d3-46d8-a998-4941d49ba685"
+      },
+      "router": {}
+    },
+    "owner": "strangepair"
+  }
+}
