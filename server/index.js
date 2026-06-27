@@ -16,7 +16,8 @@ import { promisify } from 'node:util';
 import Anthropic from '@anthropic-ai/sdk';
 import { AccessToken } from 'livekit-server-sdk';
 import { sendPush, isQuietHours, pickNudgeMessage } from './notifications.js';
-import { analyzeAndUpdate, buildProfileSummary, loadProfile, seedProfile, mergeProfiles, resolveUserId } from './contextAgent.js';
+import { analyzeAndUpdate, buildProfileSummary, buildLifeArchitectureSummary, computeUsageStats, lookupProfileField, loadProfile, seedProfile, mergeProfiles, resolveUserId } from './contextAgent.js';
+import { embedAndStore, retrieveRelevant, isConfigured as isVectorConfigured } from './vectorStore.js';
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -66,19 +67,63 @@ function formatLocalTime(timezone) {
   }
 }
 
-function buildSystemPrompt(profile, triggerContext, recentHistory, timezone) {
+/**
+ * Build the session context string for the {{session_context}} placeholder.
+ * Tells the agent how long since last session and whether to skip greeting.
+ */
+function buildSessionContext(profile) {
+  if (!profile || !profile.last_session_at) {
+    return 'This is the first session with this user.';
+  }
+
+  const lastAt = new Date(profile.last_session_at).getTime();
+  const now = Date.now();
+  const gapMs = now - lastAt;
+  const gapMinutes = Math.floor(gapMs / 60000);
+  const gapHours = Math.floor(gapMinutes / 60);
+  const gapDays = Math.floor(gapHours / 24);
+
+  let gapStr;
+  if (gapMinutes < 5) gapStr = 'just now';
+  else if (gapMinutes < 60) gapStr = `${gapMinutes} minutes ago`;
+  else if (gapHours < 24) gapStr = `${gapHours} hours ago`;
+  else if (gapDays === 1) gapStr = 'yesterday';
+  else gapStr = `${gapDays} days ago`;
+
+  // Format last session time
+  let lastTimeStr = '';
+  try {
+    lastTimeStr = new Intl.DateTimeFormat('en-US', {
+      hour: 'numeric', minute: '2-digit', hour12: true,
+    }).format(new Date(profile.last_session_at));
+  } catch {}
+
+  let context = `Last session: ${gapStr}`;
+  if (lastTimeStr && gapDays >= 1) context += ` (at ${lastTimeStr})`;
+  context += '.';
+
+  if (gapMinutes < 30) {
+    context += ' This is a continuation of the same conversation — skip the greeting and pick up where you left off.';
+  }
+
+  return context;
+}
+
+function buildSystemPrompt(profile, triggerContext, recentHistory, timezone, lifeArchitecture, sessionContext) {
   const localTime = formatLocalTime(timezone);
   const timeContext = `User's local time: ${localTime}.` +
     (triggerContext ? ` ${triggerContext}` : '');
   return systemPromptTemplate
     .replace('{{profile}}', profile || 'New user — no history yet.')
     .replace('{{trigger_context}}', timeContext)
-    .replace('{{recent_history}}', recentHistory || 'First message in this session.');
+    .replace('{{recent_history}}', recentHistory || 'First message in this session.')
+    .replace('{{life_architecture}}', lifeArchitecture || 'Not yet discovered — learn through conversation.')
+    .replace('{{session_context}}', sessionContext || 'No prior session data.');
 }
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'POST, GET, PUT, OPTIONS',
   'Access-Control-Allow-Headers': 'content-type',
 };
 
@@ -105,6 +150,41 @@ const server = createServer(async (req, res) => {
     return res.end();
   }
 
+  // ─── Usage stats tool endpoint (Bug B) ──────────────────────────────────────
+  if (req.method === 'GET' && req.url.match(/^\/context\/stats\//)) {
+    const parts = req.url.split('/context/stats/');
+    const userId = decodeURIComponent(parts[1] || '');
+    try {
+      const stats = computeUsageStats(userId);
+      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(stats));
+    } catch (err) {
+      res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: err.message }));
+    }
+  }
+
+  // ─── Profile field lookup tool endpoint (Bug C) ────────────────────────────
+  if (req.method === 'GET' && req.url.match(/^\/context\/field\//)) {
+    const urlParts = req.url.split('/context/field/');
+    const remainder = decodeURIComponent(urlParts[1] || '');
+    const slashIdx = remainder.indexOf('/');
+    if (slashIdx === -1) {
+      res.writeHead(400, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Missing field name. Use /context/field/{userId}/{field}' }));
+    }
+    const userId = remainder.slice(0, slashIdx);
+    const field = remainder.slice(slashIdx + 1);
+    try {
+      const value = lookupProfileField(userId, field);
+      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ field, value }));
+    } catch (err) {
+      res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: err.message }));
+    }
+  }
+
   if (req.method === 'POST' && req.url === '/session/turn') {
     let body = '';
     for await (const chunk of req) body += chunk;
@@ -119,11 +199,17 @@ const server = createServer(async (req, res) => {
         ? contextProfile
         : profile;
 
+      const lifeArchitecture = buildLifeArchitectureSummary(effectiveUserId);
+      const agentProfile = loadProfile(effectiveUserId);
+      const sessionContext = buildSessionContext(agentProfile);
+
       const systemPrompt = buildSystemPrompt(
         finalProfile,
         trigger_context ? JSON.stringify(trigger_context) : undefined,
         recent_history || messages?.slice(-6).map(m => `${m.role}: ${m.content}`).join('\n'),
         timezone,
+        lifeArchitecture,
+        sessionContext,
       );
 
       // Fire background analysis (non-blocking) — Sonnet extracts facts while Haiku responds
@@ -251,31 +337,35 @@ print(result["text"].strip())
       console.log(`[Voice] User: ${effectiveUserId}`);
       console.log(`[Voice] Profile (${(finalProfile || '').length} chars): ${(finalProfile || '').substring(0, 200)}`);
 
+      const lifeArchitecture = buildLifeArchitectureSummary(effectiveUserId);
+      const agentProfile = loadProfile(effectiveUserId);
+      const sessionContext = buildSessionContext(agentProfile);
+
       const voiceSystemPrompt = buildSystemPrompt(
         finalProfile,
         triggerContext ? JSON.stringify(triggerContext) : undefined,
         priorMessages || recentHistory || undefined,
         timezone,
+        lifeArchitecture,
+        sessionContext,
       );
 
       try {
-        console.log(`[Voice] System prompt: ${voiceSystemPrompt.length} chars, has Mike: ${voiceSystemPrompt.includes('Mike')}, has Alec: ${voiceSystemPrompt.includes('Alec')}`);
+        console.log(`[Voice] System prompt: ${voiceSystemPrompt.length} chars`);
       } catch(e) { console.log('[Voice] Log error:', e.message); }
 
       // Extract name — check context agent first, then client profile
-      const agentProfile = loadProfile(effectiveUserId);
       let userName = agentProfile?.name || 'there';
       if (userName === 'there' && finalProfile) {
         const nameMatch = finalProfile.match(/Name:\s*([^.]+)/);
         if (nameMatch) userName = nameMatch[1].trim();
       }
 
-      // Build the greeting instruction — include a profile hint so the agent uses its knowledge
+      // Build the greeting instruction
       let greeting;
       if (context === 'switched_from_text' || priorMessages) {
         greeting = 'Casually acknowledge switching to voice and continue the conversation. One sentence.';
       } else if (agentProfile && agentProfile.session_count > 0) {
-        // Returning user — build a contextual greeting with a specific detail
         const hints = agentProfile.next_session_hints || [];
         const hint = hints.length > 0 ? hints[0] : null;
         greeting = `Greet ${userName} warmly by name. You know them well — you've had ${agentProfile.session_count} conversations. `
@@ -292,7 +382,13 @@ print(result["text"].strip())
       try {
         const agentDispatch = new AgentDispatchClient(lkUrl, apiKey, apiSecret);
         await agentDispatch.createDispatch(roomName, 'battlebuddy', {
-          metadata: JSON.stringify({ systemPrompt: voiceSystemPrompt, greeting, userId: effectiveUserId, timezone: timezone || 'America/Chicago' }),
+          metadata: JSON.stringify({
+            systemPrompt: voiceSystemPrompt,
+            greeting,
+            userId: effectiveUserId,
+            timezone: timezone || 'America/Chicago',
+            last_session_at: agentProfile?.last_session_at || null,
+          }),
         });
         console.log(`Dispatched agent to room: ${roomName} (user: ${userName})`);
       } catch (dispatchErr) {
@@ -300,7 +396,11 @@ print(result["text"].strip())
       }
 
       res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ token, url: process.env.LIVEKIT_URL }));
+      res.end(JSON.stringify({
+        token,
+        url: process.env.LIVEKIT_URL,
+        last_session_at: agentProfile?.last_session_at || null,
+      }));
     } catch (err) {
       res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
@@ -619,7 +719,16 @@ Return ONLY the JSON object, no markdown, no explanation.`;
       const reportText = response.content[0]?.text || '{}';
       let report;
       try {
-        report = JSON.parse(reportText);
+        // Use jsonrepair for session reports too
+        const { jsonrepair: jr } = await import('jsonrepair');
+        try {
+          report = JSON.parse(reportText);
+        } catch {
+          try { report = JSON.parse(jr(reportText)); } catch {
+            const jsonMatch = reportText.match(/\{[\s\S]*\}/);
+            report = jsonMatch ? JSON.parse(jr(jsonMatch[0])) : {};
+          }
+        }
       } catch {
         const jsonMatch = reportText.match(/\{[\s\S]*\}/);
         report = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
@@ -662,6 +771,11 @@ Return ONLY the JSON object, no markdown, no explanation.`;
             summary: report.summary || 'Session completed.',
           }),
         });
+
+        // Embed the session summary into vector store
+        if (report.summary) {
+          embedAndStore(userId, report.summary, 'session_summary', cravingEventId).catch(() => {});
+        }
       }
 
       console.log(`Session report generated for event ${cravingEventId}`);
@@ -682,8 +796,9 @@ Return ONLY the JSON object, no markdown, no explanation.`;
     const userId = req.url.split('/context/profile/')[1];
     const summary = buildProfileSummary(userId);
     const profile = loadProfile(userId);
+    const lifeArchitecture = buildLifeArchitectureSummary(userId);
     res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ summary, profile }));
+    return res.end(JSON.stringify({ summary, profile, lifeArchitecture }));
   }
 
   // Trigger a context analysis (called by the app on session end or mid-session)
@@ -693,7 +808,28 @@ Return ONLY the JSON object, no markdown, no explanation.`;
     try {
       const { userId, messages, isSessionEnd, timezone } = JSON.parse(body);
       // Run async — respond immediately
-      analyzeAndUpdate(userId || 'default', messages, isSessionEnd, timezone || 'America/Chicago').catch(() => {});
+      analyzeAndUpdate(userId || 'default', messages, isSessionEnd, timezone || 'America/Chicago')
+        .then(updates => {
+          // After analysis, embed observations into vector store
+          if (updates && isVectorConfigured()) {
+            const effectiveUserId = resolveUserId(userId || 'default');
+            if (updates.recent_insights) {
+              const insights = Array.isArray(updates.recent_insights) ? updates.recent_insights : [updates.recent_insights];
+              for (const insight of insights) {
+                const val = typeof insight === 'string' ? insight : insight?.value || '';
+                if (val) embedAndStore(effectiveUserId, val, 'insight').catch(() => {});
+              }
+            }
+            if (updates.triggers) {
+              const triggers = Array.isArray(updates.triggers) ? updates.triggers : [updates.triggers];
+              for (const trigger of triggers) {
+                const val = typeof trigger === 'string' ? trigger : trigger?.value || '';
+                if (val) embedAndStore(effectiveUserId, val, 'trigger').catch(() => {});
+              }
+            }
+          }
+        })
+        .catch(() => {});
       res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ ok: true, queued: true }));
     } catch (err) {
@@ -756,6 +892,7 @@ Return ONLY the JSON object, no markdown, no explanation.`;
         date: localDate,
         event: outcome === 'resisted' ? 'resisted the urge after session' : 'gave in after session',
         type: outcome === 'resisted' ? 'resist' : 'smoke',
+        verified: false,
         logged_at: new Date().toISOString(),
       });
       if (profile.activity_log.length > 60) {
@@ -893,16 +1030,13 @@ Return ONLY the JSON object, no markdown, no explanation.`;
 
         console.log(`[Webhook] Room finished: ${roomName} (user: ${userId})`);
 
-        // The agent's periodic save and on_close should have already sent the transcript.
-        // This webhook is the safety net — trigger a profile save to increment session count
-        // if the context agent already has data from periodic saves.
         const profile = loadProfile(userId);
         if (profile && profile.last_updated) {
           const lastUpdate = new Date(profile.last_updated).getTime();
           const now = Date.now();
-          // If profile was updated in the last 5 minutes (from periodic saves), just increment session count
           if (now - lastUpdate < 5 * 60 * 1000) {
             profile.session_count = (profile.session_count || 0) + 1;
+            profile.last_session_at = new Date().toISOString();
             profile.last_updated = new Date().toISOString();
             const storePath = process.env.CONTEXT_STORE_DIR || resolve(__dirname, 'context-store');
             try { mkdirSync(storePath, { recursive: true }); } catch {}
@@ -923,7 +1057,7 @@ Return ONLY the JSON object, no markdown, no explanation.`;
 
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true }));
+    return res.end(JSON.stringify({ ok: true, vector_store: isVectorConfigured() }));
   }
 
   res.writeHead(404, CORS);
@@ -998,10 +1132,8 @@ async function syncRiskWindowsToSupabase() {
   }
 }
 
-// Risk window sync available on-demand via /admin/sync-risk-windows
-// Disabled as a periodic job to conserve memory
-
 const PORT = process.env.PORT || 3333;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`BattleBuddy API running on http://0.0.0.0:${PORT}`);
+  console.log(`Vector store: ${isVectorConfigured() ? 'configured' : 'not configured (set OPENAI_API_KEY)'}`);
 });

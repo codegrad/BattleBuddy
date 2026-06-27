@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 from dotenv import load_dotenv
 from livekit import agents
-from livekit.agents import AgentServer, AgentSession, Agent
+from livekit.agents import AgentServer, AgentSession, Agent, function_tool
 from livekit.agents.llm import ChatContext
 from livekit.plugins import anthropic, deepgram
 import aiohttp
@@ -30,6 +30,8 @@ FALLBACK_PROMPT = (_base / "prompts" / "system.battlebuddy.md").read_text()
 FALLBACK_PROMPT = FALLBACK_PROMPT.replace("{{profile}}", "New user.")
 FALLBACK_PROMPT = FALLBACK_PROMPT.replace("{{trigger_context}}", "User opened a voice session.")
 FALLBACK_PROMPT = FALLBACK_PROMPT.replace("{{recent_history}}", "No prior history.")
+FALLBACK_PROMPT = FALLBACK_PROMPT.replace("{{life_architecture}}", "Not yet discovered — learn through conversation.")
+FALLBACK_PROMPT = FALLBACK_PROMPT.replace("{{session_context}}", "No prior session data.")
 
 VOICE_CONFIG_PATH = _base / "server" / "voice-config.json"
 DEFAULT_VOICE = "aura-2-arcas-en"
@@ -78,6 +80,25 @@ async def battlebuddy_session(ctx: agents.JobContext):
 
     user_id = dispatch_meta.get("userId") or "default"
     timezone = dispatch_meta.get("timezone") or "America/Chicago"
+    last_session_at = dispatch_meta.get("last_session_at")
+
+    # Compute session gap for the system prompt injection (Bug D)
+    session_gap_str = ""
+    if last_session_at:
+        try:
+            last_dt = datetime.fromisoformat(last_session_at.replace("Z", "+00:00"))
+            gap_seconds = (datetime.now(last_dt.tzinfo or ZoneInfo("UTC")) - last_dt).total_seconds()
+            gap_minutes = int(gap_seconds / 60)
+            if gap_minutes < 30:
+                session_gap_str = f"Last session: {gap_minutes} minutes ago. This is a continuation — skip the greeting."
+            elif gap_minutes < 60:
+                session_gap_str = f"Last session: {gap_minutes} minutes ago."
+            elif gap_minutes < 1440:
+                session_gap_str = f"Last session: {gap_minutes // 60} hours ago."
+            else:
+                session_gap_str = f"Last session: {gap_minutes // 1440} days ago."
+        except Exception:
+            pass
 
     print(f"[Agent] Session started for {user_id}")
 
@@ -85,13 +106,47 @@ async def battlebuddy_session(ctx: agents.JobContext):
     last_save_count = 0
     session_ended = False
 
+    # Bug I: 30-second repeat buffer — track last question asked
+    last_question = {"text": "", "time": 0.0}
+
     class SessionAgent(Agent):
         def __init__(self):
             super().__init__(instructions=system_prompt)
 
+        @function_tool()
+        async def get_usage_stats(self):
+            """Get the user's deterministic cigarette/usage counts, gaps between cigarettes, and averages. Always call this for any numeric usage question instead of counting manually."""
+            try:
+                async with aiohttp.ClientSession() as http:
+                    resp = await http.get(
+                        f"{SERVER_URL}/context/stats/{user_id}",
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    )
+                    data = await resp.json()
+                    print(f"[Agent] Usage stats for {user_id}: {data}")
+                    return json.dumps(data)
+            except Exception as e:
+                print(f"[Agent] get_usage_stats failed: {e}")
+                return json.dumps({"error": str(e)})
+
+        @function_tool()
+        async def lookup_profile_field(self, field: str):
+            """Look up a stored fact about the user. Use before answering factual questions about their history, location, routine, triggers, quit date, family, or any profile field. If the result is empty, say 'I don't have that recorded yet' — never guess."""
+            try:
+                async with aiohttp.ClientSession() as http:
+                    resp = await http.get(
+                        f"{SERVER_URL}/context/field/{user_id}/{field}",
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    )
+                    data = await resp.json()
+                    print(f"[Agent] Profile field '{field}' for {user_id}: {data}")
+                    return json.dumps(data)
+            except Exception as e:
+                print(f"[Agent] lookup_profile_field failed: {e}")
+                return json.dumps({"error": str(e)})
+
         async def on_user_turn_completed(self, turn_ctx, new_message):
-            # Inject the current local time before every response so BB always
-            # knows "now" — the clock stays live for the whole call.
+            # Inject the current local time before every response
             try:
                 now = local_now(timezone)
                 turn_ctx.add_message(
@@ -100,6 +155,16 @@ async def battlebuddy_session(ctx: agents.JobContext):
                 )
             except Exception:
                 pass
+
+            # Bug I: Inject repeat guard
+            if last_question["text"] and (time.time() - last_question["time"]) < 60:
+                try:
+                    turn_ctx.add_message(
+                        role="system",
+                        content=f"[REPEAT GUARD: You recently asked: \"{last_question['text']}\". Do NOT ask the same or a substantially similar question again. Move the conversation forward.]",
+                    )
+                except Exception:
+                    pass
 
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
@@ -133,6 +198,11 @@ async def battlebuddy_session(ctx: agents.JobContext):
 
                 if content:
                     session_messages.append({"role": role, "content": content})
+
+                    # Bug I: Track assistant questions for repeat buffer
+                    if role == "assistant" and "?" in content:
+                        last_question["text"] = content.strip()
+                        last_question["time"] = time.time()
 
                     if role == "user":
                         lower = content.lower().strip()

@@ -19,6 +19,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
+import { jsonrepair } from 'jsonrepair';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -54,6 +55,12 @@ const DATED_SCALARS = [
   'family', 'occupation',
 ];
 
+const LIFE_ARCH_ARRAYS = [
+  'trigger_taxonomy', 'flow_state_activities', 'physical_risk_spaces',
+  'oral_habit_pairs', 'transition_patterns', 'resistance_strategies',
+  'social_contexts',
+];
+
 // Map of user ID aliases — redirects old IDs to the canonical one
 const USER_ALIASES = {
   'default': 'user-1782351957094',
@@ -79,6 +86,29 @@ function itemValue(item) {
 }
 
 /**
+ * Safely parse JSON from LLM output. Tries JSON.parse, then jsonrepair,
+ * then regex extraction, then jsonrepair on the extracted block.
+ * Never throws — returns {} on total failure.
+ */
+function safeJsonParse(text) {
+  // Direct parse
+  try { return JSON.parse(text); } catch {}
+
+  // jsonrepair on full text
+  try { return JSON.parse(jsonrepair(text)); } catch {}
+
+  // Extract JSON block via regex
+  const match = text.match(/\{[\s\S]*\}/);
+  if (match) {
+    try { return JSON.parse(match[0]); } catch {}
+    try { return JSON.parse(jsonrepair(match[0])); } catch {}
+  }
+
+  console.error('[ContextAgent] All JSON parse attempts failed, skipping update');
+  return {};
+}
+
+/**
  * Migrate a profile from plain-string arrays to timestamped objects.
  * Idempotent — safe to call on already-migrated profiles.
  */
@@ -99,6 +129,102 @@ function migrateProfile(profile) {
   }
   if (!Array.isArray(profile.activity_log)) profile.activity_log = [];
   if (!Array.isArray(profile.risk_windows)) profile.risk_windows = [];
+  // Ensure life_architecture exists
+  if (!profile.life_architecture || typeof profile.life_architecture !== 'object') {
+    profile.life_architecture = {
+      trigger_taxonomy: [],
+      flow_state_activities: [],
+      physical_risk_spaces: [],
+      oral_habit_pairs: [],
+      transition_patterns: [],
+      urge_model: null,
+      resistance_strategies: [],
+      social_contexts: [],
+    };
+  }
+  for (const field of LIFE_ARCH_ARRAYS) {
+    if (!Array.isArray(profile.life_architecture[field])) {
+      profile.life_architecture[field] = [];
+    }
+  }
+  return profile;
+}
+
+/**
+ * Prune a profile to stay under size limits.
+ * Called before every write.
+ * - daily_usage entries: keep last 3 days, aggregate older into daily summaries
+ * - timestamped arrays: cap at 15 (drop oldest)
+ * - activity_log: cap at 20 entries
+ * - life_architecture arrays: cap at 15
+ * Target: profile under 15K chars, system prompt under 35K.
+ */
+function pruneProfile(profile) {
+  // Cap timestamped arrays at 15, keep most recent
+  for (const field of TIMESTAMPED_ARRAYS) {
+    if (profile[field] && profile[field].length > 15) {
+      profile[field] = profile[field].slice(-15);
+    }
+  }
+
+  // Cap activity_log at 20 entries (most recent)
+  if (profile.activity_log && profile.activity_log.length > 20) {
+    // Before dropping, aggregate older entries into daily summaries
+    const kept = profile.activity_log.slice(-20);
+    const dropped = profile.activity_log.slice(0, -20);
+
+    // Build daily summaries from dropped entries
+    const dailySummaries = {};
+    for (const ev of dropped) {
+      const d = ev.date || 'undated';
+      if (!dailySummaries[d]) {
+        dailySummaries[d] = { smokes: 0, resists: 0, total: 0 };
+      }
+      dailySummaries[d].total++;
+      if (ev.type === 'smoke') dailySummaries[d].smokes++;
+      if (ev.type === 'resist') dailySummaries[d].resists++;
+    }
+
+    // Store aggregated summaries
+    if (!Array.isArray(profile.daily_summaries)) profile.daily_summaries = [];
+    for (const [date, summary] of Object.entries(dailySummaries)) {
+      const existing = profile.daily_summaries.find(s => s.date === date);
+      if (existing) {
+        existing.smokes += summary.smokes;
+        existing.resists += summary.resists;
+        existing.total += summary.total;
+      } else {
+        profile.daily_summaries.push({ date, ...summary });
+      }
+    }
+    // Cap daily summaries at 30 days
+    if (profile.daily_summaries.length > 30) {
+      profile.daily_summaries = profile.daily_summaries.slice(-30);
+    }
+
+    profile.activity_log = kept;
+  }
+
+  // Cap risk_windows at 20
+  if (profile.risk_windows && profile.risk_windows.length > 20) {
+    profile.risk_windows.sort((a, b) => (b.weight || 0) - (a.weight || 0));
+    profile.risk_windows = profile.risk_windows.slice(0, 20);
+  }
+
+  // Cap session_outcomes at 50
+  if (profile.session_outcomes && profile.session_outcomes.length > 50) {
+    profile.session_outcomes = profile.session_outcomes.slice(-50);
+  }
+
+  // Cap life_architecture arrays at 15
+  if (profile.life_architecture) {
+    for (const field of LIFE_ARCH_ARRAYS) {
+      if (Array.isArray(profile.life_architecture[field]) && profile.life_architecture[field].length > 15) {
+        profile.life_architecture[field] = profile.life_architecture[field].slice(-15);
+      }
+    }
+  }
+
   return profile;
 }
 
@@ -139,12 +265,24 @@ export function loadProfile(rawUserId) {
     emotional_patterns: null,
     session_count: 0,
     last_updated: null,
+    last_session_at: null,
     recent_insights: [],
     next_session_hints: [],
     user_quotes: [],
     unknowns: [],
     risk_windows: [],
     activity_log: [],
+    daily_summaries: [],
+    life_architecture: {
+      trigger_taxonomy: [],
+      flow_state_activities: [],
+      physical_risk_spaces: [],
+      oral_habit_pairs: [],
+      transition_patterns: [],
+      urge_model: null,
+      resistance_strategies: [],
+      social_contexts: [],
+    },
   };
   return profiles[userId];
 }
@@ -155,17 +293,16 @@ function saveProfile(userId) {
 
   profile.last_updated = new Date().toISOString();
 
+  // Prune before writing
+  pruneProfile(profile);
+
   try { mkdirSync(STORE_DIR, { recursive: true }); } catch {}
 
   writeFileSync(getStorePath(userId), JSON.stringify(profile, null, 2));
 }
 
 /**
- * Format a relative time string from an ISO timestamp.
- */
-/**
  * Parse a clock time string ("6:35 AM", "11:32 PM") into minutes since midnight.
- * Used to sort activity log entries chronologically within a day.
  */
 function timeToMinutes(timeStr) {
   if (!timeStr) return 0;
@@ -294,11 +431,14 @@ export function buildProfileSummary(rawUserId) {
     const lines = dates.map(d => {
       const events = byDate[d]
         .sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time))
-        .map(ev => `${ev.time} — ${ev.event}${ev.type && ev.type !== 'other' ? ` [${ev.type}]` : ''}`);
+        .map(ev => {
+          const verified = ev.verified ? '' : ' [unverified time]';
+          return `${ev.time} — ${ev.event}${ev.type && ev.type !== 'other' ? ` [${ev.type}]` : ''}${verified}`;
+        });
       const label = d === 'undated' ? '' : `${d}: `;
       return `${label}${events.join(' → ')}`;
     });
-    parts.push(`ACTIVITY TIMELINE (the user's logged day-by-day record — reference this precisely, with exact times, when they ask what you remember): ${lines.join(' || ')}`);
+    parts.push(`ACTIVITY TIMELINE (only cite times the user explicitly reported — times marked [unverified] were system-estimated): ${lines.join(' || ')}`);
   }
 
   if (p.session_outcomes && p.session_outcomes.length > 0) {
@@ -323,6 +463,168 @@ export function buildProfileSummary(rawUserId) {
 }
 
 /**
+ * Build a natural language summary of the user's life architecture.
+ * This goes in the {{life_architecture}} placeholder.
+ */
+export function buildLifeArchitectureSummary(rawUserId) {
+  const userId = resolveUserId(rawUserId);
+  const p = loadProfile(userId);
+  const la = p.life_architecture;
+  if (!la) return 'Not yet discovered — learn through conversation.';
+
+  const parts = [];
+
+  if (la.trigger_taxonomy && la.trigger_taxonomy.length > 0) {
+    const triggers = la.trigger_taxonomy.map(t => {
+      let s = t.trigger || t.value || '';
+      if (t.context) s += ` (${t.context})`;
+      if (t.intensity) s += ` — intensity ${t.intensity}/10`;
+      return s;
+    });
+    parts.push(`TRIGGER MAP (discovered for this user): ${triggers.join('; ')}`);
+  }
+
+  if (la.flow_state_activities && la.flow_state_activities.length > 0) {
+    const vals = la.flow_state_activities.map(i => typeof i === 'string' ? i : (i.value || i.activity || ''));
+    parts.push(`FLOW STATES (activities that eliminate urges for this user): ${vals.join(', ')}`);
+  }
+
+  if (la.physical_risk_spaces && la.physical_risk_spaces.length > 0) {
+    const vals = la.physical_risk_spaces.map(i => typeof i === 'string' ? i : (i.value || i.space || ''));
+    parts.push(`RISK SPACES (locations associated with smoking): ${vals.join(', ')}`);
+  }
+
+  if (la.oral_habit_pairs && la.oral_habit_pairs.length > 0) {
+    const vals = la.oral_habit_pairs.map(i => typeof i === 'string' ? i : (i.value || ''));
+    parts.push(`ORAL HABIT PAIRS: ${vals.join(', ')}`);
+  }
+
+  if (la.urge_model) {
+    parts.push(`HOW URGES FEEL (in their words): "${la.urge_model}"`);
+  }
+
+  if (la.resistance_strategies && la.resistance_strategies.length > 0) {
+    const vals = la.resistance_strategies.map(i => typeof i === 'string' ? i : (i.value || i.strategy || ''));
+    parts.push(`WHAT WORKS FOR THIS USER: ${vals.join('; ')}`);
+  }
+
+  if (la.social_contexts && la.social_contexts.length > 0) {
+    const vals = la.social_contexts.map(i => typeof i === 'string' ? i : (i.value || ''));
+    parts.push(`SOCIAL CONTEXTS affecting usage: ${vals.join('; ')}`);
+  }
+
+  if (la.transition_patterns && la.transition_patterns.length > 0) {
+    const vals = la.transition_patterns.map(i => typeof i === 'string' ? i : (i.value || ''));
+    parts.push(`TRANSITION PATTERNS: ${vals.join('; ')}`);
+  }
+
+  if (parts.length === 0) return 'Not yet discovered — learn through conversation.';
+  return parts.join('\n');
+}
+
+/**
+ * Compute deterministic usage stats from the activity_log.
+ * Returns { today_count, last_cigarette_at, gaps, average_gap_minutes, current_gap_minutes }
+ */
+export function computeUsageStats(rawUserId, timezone = 'America/Chicago') {
+  const userId = resolveUserId(rawUserId);
+  const p = loadProfile(userId);
+
+  let localDate;
+  try {
+    localDate = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+  } catch {
+    localDate = new Date().toISOString().slice(0, 10);
+  }
+
+  const smokeEvents = (p.activity_log || []).filter(ev => ev.type === 'smoke');
+  const todaySmokes = smokeEvents.filter(ev => ev.date === localDate);
+
+  // Sort all smokes chronologically
+  const allSmokes = [...smokeEvents].sort((a, b) => {
+    const da = `${a.date} ${a.time}`;
+    const db = `${b.date} ${b.time}`;
+    return da.localeCompare(db);
+  });
+
+  const lastSmoke = allSmokes.length > 0 ? allSmokes[allSmokes.length - 1] : null;
+
+  // Compute gaps between consecutive smokes (in minutes)
+  const gaps = [];
+  for (let i = 1; i < allSmokes.length; i++) {
+    const prevMin = timeToMinutes(allSmokes[i - 1].time);
+    const currMin = timeToMinutes(allSmokes[i].time);
+    if (allSmokes[i].date === allSmokes[i - 1].date) {
+      gaps.push(currMin - prevMin);
+    }
+  }
+
+  const avgGap = gaps.length > 0 ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length) : null;
+
+  // Current gap from last cigarette to now
+  let currentGapMinutes = null;
+  if (lastSmoke) {
+    try {
+      let localNowStr;
+      try {
+        localNowStr = new Intl.DateTimeFormat('en-US', {
+          timeZone: timezone, hour: 'numeric', minute: '2-digit', hour12: true,
+        }).format(new Date());
+      } catch {
+        localNowStr = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      }
+      const nowMin = timeToMinutes(localNowStr);
+      const lastMin = timeToMinutes(lastSmoke.time);
+      if (lastSmoke.date === localDate) {
+        currentGapMinutes = nowMin - lastMin;
+      }
+    } catch {}
+  }
+
+  return {
+    today_count: todaySmokes.length,
+    last_cigarette_at: lastSmoke ? `${lastSmoke.time} on ${lastSmoke.date}` : null,
+    gaps,
+    average_gap_minutes: avgGap,
+    current_gap_minutes: currentGapMinutes,
+  };
+}
+
+/**
+ * Look up a single profile field value.
+ */
+export function lookupProfileField(rawUserId, field) {
+  const userId = resolveUserId(rawUserId);
+  const p = loadProfile(userId);
+
+  // Check top-level fields
+  if (field in p) {
+    const val = p[field];
+    if (Array.isArray(val)) {
+      return val.map(item => itemValue(item)).filter(Boolean);
+    }
+    return val;
+  }
+
+  // Check life_architecture fields
+  if (p.life_architecture && field in p.life_architecture) {
+    const val = p.life_architecture[field];
+    if (Array.isArray(val)) {
+      return val.map(item => {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object') return item.value || item.trigger || item.activity || item.space || JSON.stringify(item);
+        return '';
+      }).filter(Boolean);
+    }
+    return val;
+  }
+
+  return null;
+}
+
+/**
  * Analyze a batch of messages and update the user's profile.
  * Called asynchronously — never blocks the real-time conversation.
  */
@@ -332,6 +634,11 @@ export async function analyzeAndUpdate(rawUserId, messages, isSessionEnd = false
   const userId = resolveUserId(rawUserId);
   const profile = loadProfile(userId);
   const sessionTimestamp = new Date().toISOString();
+
+  // Track last_session_at
+  if (!profile.last_session_at) {
+    profile.last_session_at = sessionTimestamp;
+  }
 
   // The user's local time right now — used to resolve "I just had a cigarette" to an actual clock time
   let localNow, localDate;
@@ -348,7 +655,6 @@ export async function analyzeAndUpdate(rawUserId, messages, isSessionEnd = false
   }
 
   // Build a simplified view of the profile for the extraction prompt
-  // (show string values, not the timestamped objects)
   const simplifiedProfile = {};
   for (const [key, value] of Object.entries(profile)) {
     if (Array.isArray(value) && TIMESTAMPED_ARRAYS.includes(key)) {
@@ -381,53 +687,52 @@ ${isSessionEnd ? 'This is the end of a session. Generate next_session_hints — 
 
 CRITICAL — CORRECTIONS OVERWRITE OLD DATA:
 If the user corrects something previously in the profile, return the CORRECTED value for that field. Do NOT append "user corrected this" — just return the right answer. The merge logic will overwrite the old value.
-Example: if profile says "son quit smoking" but user says "my son never smoked, he vapes" → return family: "son vapes, never smoked" — not "son quit smoking BUT user corrected this to say he never smoked."
+
+CRITICAL — TIMESTAMP VERIFICATION:
+For activity_log entries, set "verified": true ONLY if the user explicitly stated the time. If you are estimating the time from "just now" or "a while ago" or the current clock, set "verified": false. This distinction is critical — the agent must never present unverified times as fact.
 
 EXTRACTION RULES — be LITERAL and SPECIFIC:
 - QUOTE the user's exact words when they describe feelings, metaphors, or experiences. Don't paraphrase.
-  BAD: "describes addiction using a prison metaphor"
-  GOOD: "said 'the urge feels like a warden — I've been in the prison so long I'm like one of those old guys who gets released and doesn't know what to do in the real world'"
 - Use EXACT numbers. Don't round or approximate.
-  BAD: "approximately 36 years of smoking"
-  GOOD: "started smoking at age 9, now 45 — 36 years"
 - Capture SPECIFIC names, products, books, medications, people.
-  BAD: "tried pharmaceutical cessation"
-  GOOD: "tried Chantix — took it for 6 days to fill receptors"
 - For health: quote their exact symptoms.
-  BAD: "lung issues"
-  GOOD: "has a smoker's cough, said 'my lungs are telling me it's time'"
 - For family: capture relationships with detail.
-  BAD: "has a son"
-  GOOD: "son quit smoking 18 months ago, quit vaping 6 months ago — his journey is inspiring user"
 - For motivations: capture the WHY in their words.
 - For life_context: capture anything personal — job, hobbies, daily routine, stress sources, relationships.
 - For recent_insights: capture the user's own realizations in THEIR language.
 - For next_session_hints: be specific — "ask about X" not "explore themes."
 
+LIFE ARCHITECTURE EXTRACTION — build the user's unique map:
+Extract into the life_architecture object:
+- trigger_taxonomy: any time the user describes a trigger situation → { "trigger": "what", "context": "when/where", "intensity": 1-10, "verified": true }
+- flow_state_activities: any activity the user says eliminates or suppresses urges → add it
+- physical_risk_spaces: any location/space the user associates with smoking → add it
+- oral_habit_pairs: activities paired with the oral/smoking habit (coffee + cigarette, beer + cigarette) → add them
+- urge_model: if the user describes how urges FEEL in their own words/metaphors → capture their exact language
+- resistance_strategies: strategies the user has tried that WORKED → add them
+- social_contexts: social situations that affect usage (drinking with friends, work breaks, etc.) → add them
+- transition_patterns: how the user moves between activities, especially transitions that trigger smoking → add them
+
 UNKNOWNS AND ANSWERS:
-- If the user mentions something (a concept, a rule, a method, a person) that BB doesn't know about and the user doesn't explain → add it to "unknowns" array. Example: user says "remember the rule of three?" and doesn't explain → unknowns: ["the rule of three — user referenced it but never explained what it is"]
-- If the user ANSWERS a previous unknown (explains something that was in the unknowns list) → add the explanation to the appropriate field (life_context, coping_strategies, etc.) AND add a "resolved_unknowns" entry so we can remove it from unknowns. Example: user explains the rule of three → coping_strategies: ["rule of three: [their explanation]"], resolved_unknowns: ["the rule of three"]
-- If BB asks the user something and the user answers → capture that answer as a new fact in the relevant field. Don't let answers to questions evaporate.
+- If the user mentions something BB doesn't know about and the user doesn't explain → add it to "unknowns" array
+- If the user ANSWERS a previous unknown → add the explanation to the appropriate field AND add to "resolved_unknowns"
+- If BB asks the user something and the user answers → capture that answer as a new fact
 
 TIME-OF-DAY PATTERNS — RISK WINDOWS:
 - If the user mentions a specific time of day in relation to cravings, smoking, triggers, or vulnerability, extract it as a risk_window object.
 - Format: { "hour": 14, "day_of_week": null, "weight": 0.8, "source": "mentioned afternoon cravings after lunch" }
 - hour: 0-23 (24h format). day_of_week: 0=Sunday through 6=Saturday, or null if not day-specific.
-- weight: 0.0-1.0 (how strong the signal is — direct statement "I always smoke at 3pm" = 1.0, indirect hint "afternoons are hard" = 0.5)
-- Capture morning routines, post-meal times, commute windows, evening wind-down, bedtime — any time the user associates with their habit.
-- If the user logs a cigarette or craving, note the time it happened as a risk window.
-- If the user logs a NON-smoking moment at a previously risky time, note it with lower weight (the pattern may be changing).
+- weight: 0.0-1.0 (how strong the signal is)
 
 ACTIVITY LOG — THE CHRONOLOGICAL TIMELINE (CRITICAL):
-This user is logging their day moment by moment. They expect BB to remember the timeline precisely — "first cigarette at 6:35, gym at 8:15, no cigarette on the drive home." Every concrete activity, event, cigarette, resist, meal, gym session, work block, or mood the user reports must be captured as an activity_log entry with its ACTUAL clock time (using the local time provided above).
-- Format: { "time": "6:35 AM", "date": "${localDate}", "event": "had first cigarette of the day", "type": "smoke" }
+Every concrete activity, event, cigarette, resist, meal, gym session, work block, or mood the user reports must be captured as an activity_log entry.
+- Format: { "time": "6:35 AM", "date": "${localDate}", "event": "had first cigarette of the day", "type": "smoke", "verified": true }
 - type is one of: smoke, resist, craving, gym, work, meal, sleep, mood, social, other
+- "verified": true if the user explicitly stated the time, false if estimated from context
 - Use the user's EXACT words for the event when possible.
-- If they report a cigarette → type "smoke". If they report resisting an urge → type "resist". If they report a craving they're sitting with → type "craving". A non-smoking activity (gym, working, eating) → the appropriate type.
-- ALWAYS include the time. If the user didn't state a time, use the current local time provided above.
-- This is the most important extraction for this user. Be precise and complete.
+- ALWAYS include the time. If the user didn't state a time, use the current local time provided above BUT set verified to false.
 
-Return a JSON object with ONLY fields that have NEW information. For arrays, return only NEW items to add (as plain strings — the system will add timestamps automatically). EXCEPTION: activity_log and risk_windows items are objects, return them as objects per their format above.
+Return a JSON object with ONLY fields that have NEW information. For arrays, return only NEW items to add (as plain strings — the system will add timestamps automatically). EXCEPTION: activity_log, risk_windows, and life_architecture items are objects, return them as objects per their format above.
 
 Available fields:
 name, age, location, occupation, family, addiction_type, substance_history, daily_usage,
@@ -435,11 +740,10 @@ quit_reason, health_concerns, previous_quit_attempts, longest_quit,
 triggers (array), coping_strategies (array), what_works (array), what_doesnt_work (array),
 motivations (array), life_context (array), preferred_coping_style, response_preference,
 emotional_patterns, next_session_hints (array), recent_insights (array),
-user_quotes (array) — memorable things the user said that reveal who they are,
-unknowns (array) — things the user mentioned but never explained,
-resolved_unknowns (array) — unknowns that were explained this session (will be removed from unknowns list),
-risk_windows (array of objects) — time-of-day vulnerability patterns: { hour, day_of_week, weight, source },
-activity_log (array of objects) — chronological events with clock times: { time, date, event, type }
+user_quotes (array), unknowns (array), resolved_unknowns (array),
+risk_windows (array of objects),
+activity_log (array of objects with verified flag),
+life_architecture (object with: trigger_taxonomy, flow_state_activities, physical_risk_spaces, oral_habit_pairs, urge_model, resistance_strategies, social_contexts, transition_patterns)
 
 Return ONLY valid JSON. No markdown, no explanation.`;
 
@@ -452,23 +756,19 @@ Return ONLY valid JSON. No markdown, no explanation.`;
 
     const text = response.content[0]?.text || '{}';
     console.log(`[ContextAgent] Raw response (${text.length} chars):`, text.substring(0, 300));
-    let updates;
-    try {
-      updates = JSON.parse(text);
-    } catch {
-      const match = text.match(/\{[\s\S]*\}/);
-      if (match) {
-        try { updates = JSON.parse(match[0]); } catch { updates = {}; }
-      } else {
-        updates = {};
-      }
+
+    const updates = safeJsonParse(text);
+
+    if (Object.keys(updates).length === 0) {
+      console.log('[ContextAgent] No valid updates extracted, skipping');
+      return null;
     }
 
     // Merge updates into profile
     for (const [key, value] of Object.entries(updates)) {
       if (value === null || value === undefined) continue;
       if (key === 'resolved_unknowns') continue;
-      if (key === 'risk_windows' || key === 'activity_log') continue; // handled separately below
+      if (key === 'risk_windows' || key === 'activity_log' || key === 'life_architecture') continue; // handled separately below
 
       if (TIMESTAMPED_ARRAYS.includes(key) && Array.isArray(value)) {
         if (!Array.isArray(profile[key])) profile[key] = [];
@@ -535,19 +835,52 @@ Return ONLY valid JSON. No markdown, no explanation.`;
             date: evDate,
             event: ev.event,
             type: ev.type || 'other',
+            verified: ev.verified !== undefined ? ev.verified : false,
             logged_at: sessionTimestamp,
           });
         }
       }
-      // Sort chronologically by date then time
       profile.activity_log.sort((a, b) => {
         const da = `${a.date} ${a.time}`;
         const db = `${b.date} ${b.time}`;
         return da.localeCompare(db);
       });
-      // Keep last 60 events (several days of activity)
-      if (profile.activity_log.length > 60) {
-        profile.activity_log = profile.activity_log.slice(-60);
+    }
+
+    // Handle life_architecture — merge discovered fields
+    if (updates.life_architecture && typeof updates.life_architecture === 'object') {
+      if (!profile.life_architecture) {
+        profile.life_architecture = {
+          trigger_taxonomy: [], flow_state_activities: [], physical_risk_spaces: [],
+          oral_habit_pairs: [], transition_patterns: [], urge_model: null,
+          resistance_strategies: [], social_contexts: [],
+        };
+      }
+      const la = updates.life_architecture;
+
+      // urge_model is a scalar — overwrite if provided
+      if (la.urge_model) {
+        profile.life_architecture.urge_model = la.urge_model;
+      }
+
+      // Merge array fields
+      for (const field of LIFE_ARCH_ARRAYS) {
+        if (!la[field] || !Array.isArray(la[field])) continue;
+        if (!Array.isArray(profile.life_architecture[field])) {
+          profile.life_architecture[field] = [];
+        }
+        for (const item of la[field]) {
+          if (!item) continue;
+          // Dedup by checking string representation
+          const itemStr = typeof item === 'string' ? item : JSON.stringify(item);
+          const isDup = profile.life_architecture[field].some(existing => {
+            const existStr = typeof existing === 'string' ? existing : JSON.stringify(existing);
+            return existStr === itemStr;
+          });
+          if (!isDup) {
+            profile.life_architecture[field].push(item);
+          }
+        }
       }
     }
 
@@ -563,13 +896,7 @@ Return ONLY valid JSON. No markdown, no explanation.`;
 
     if (isSessionEnd) {
       profile.session_count = (profile.session_count || 0) + 1;
-    }
-
-    // Keep arrays manageable — cap at 10, keep most recent
-    for (const field of TIMESTAMPED_ARRAYS) {
-      if (profile[field] && profile[field].length > 10) {
-        profile[field] = profile[field].slice(-10);
-      }
+      profile.last_session_at = sessionTimestamp;
     }
 
     saveProfile(userId);
@@ -613,7 +940,7 @@ export function mergeProfiles(sourceId, targetId) {
       }
     }
     target[field].sort((a, b) => (a?.captured_at || '').localeCompare(b?.captured_at || ''));
-    if (target[field].length > 10) target[field] = target[field].slice(-10);
+    if (target[field].length > 15) target[field] = target[field].slice(-15);
   }
 
   for (const field of DATED_SCALARS) {
@@ -650,8 +977,26 @@ export function mergeProfiles(sourceId, targetId) {
   }
   target.risk_windows = Array.from(riskMap.values());
 
+  // Merge life_architecture
+  if (source.life_architecture) {
+    if (!target.life_architecture) target.life_architecture = {};
+    if (source.life_architecture.urge_model && !target.life_architecture.urge_model) {
+      target.life_architecture.urge_model = source.life_architecture.urge_model;
+    }
+    for (const field of LIFE_ARCH_ARRAYS) {
+      if (!Array.isArray(target.life_architecture[field])) target.life_architecture[field] = [];
+      for (const item of (source.life_architecture[field] || [])) {
+        const itemStr = typeof item === 'string' ? item : JSON.stringify(item);
+        const isDup = target.life_architecture[field].some(existing => {
+          const existStr = typeof existing === 'string' ? existing : JSON.stringify(existing);
+          return existStr === itemStr;
+        });
+        if (!isDup) target.life_architecture[field].push(item);
+      }
+    }
+  }
+
   saveProfile(targetId);
   console.log(`[ContextAgent] Merged ${sourceId} into ${targetId}: ${target.session_count} total sessions`);
   return target;
 }
-
