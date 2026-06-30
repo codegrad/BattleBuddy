@@ -217,7 +217,7 @@
       "position": [2000, 80],
       "parameters": {
         "operation": "upload",
-        "bucketName": "battlebuddy-content",
+        "bucketName": "battlebuddy",
         "fileName": "=images/{{ $json.theme.replace(/\\s+/g, '-') }}/{{ $json.operationName.split('/').pop() }}.png",
         "binaryData": true,
         "binaryPropertyName": "data",
@@ -391,7 +391,7 @@
       "position": [3440, -40],
       "parameters": {
         "operation": "upload",
-        "bucketName": "battlebuddy-content",
+        "bucketName": "battlebuddy",
         "fileName": "=videos/{{ $('Store Operation Name').item.json.theme.replace(/\\s+/g, '-') }}/{{ $('Store Operation Name').item.json.operationName.split('/').pop() }}.mp4",
         "binaryData": true,
         "binaryPropertyName": "data",

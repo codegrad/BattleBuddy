@@ -18,8 +18,11 @@ supabase/.env
 supabase/.env.local
 server/.env
 server/.env.local
+server/.env.admin
 agent/.env
 agent/.env.local
+.env.admin
+*.env.admin
 
 # Native
 ios/
