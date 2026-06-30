@@ -6,7 +6,10 @@
       "name": "Schedule Trigger",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [-400, 0],
+      "position": [
+        -400,
+        0
+      ],
       "parameters": {
         "rule": {
           "interval": [
@@ -23,7 +26,10 @@
       "name": "Manual Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [-400, 160],
+      "position": [
+        -400,
+        160
+      ],
       "parameters": {}
     },
     {
@@ -31,7 +37,10 @@
       "name": "Set Config",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [-160, 80],
+      "position": [
+        -160,
+        80
+      ],
       "parameters": {
         "assignments": {
           "assignments": [
@@ -63,7 +72,10 @@
       "name": "Split By Theme",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [80, 80],
+      "position": [
+        80,
+        80
+      ],
       "parameters": {
         "batchSize": 1,
         "options": {}
@@ -74,7 +86,10 @@
       "name": "All Themes Done",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [320, -120],
+      "position": [
+        320,
+        -120
+      ],
       "parameters": {}
     },
     {
@@ -82,22 +97,38 @@
       "name": "Generate Prompts (Claude)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [320, 80],
+      "position": [
+        320,
+        80
+      ],
       "parameters": {
         "method": "POST",
         "url": "https://api.anthropic.com/v1/messages",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}" },
-            { "name": "anthropic-version", "value": "2023-06-01" },
-            { "name": "content-type", "value": "application/json" }
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: \"claude-haiku-4-5-20251001\", max_tokens: 1024, messages: [{ role: \"user\", content: `You are generating short cinematic AI video prompts for a smoking/vaping cessation app's content feed. Theme: \"${$json.theme}\". Generate exactly ${$('Set Config').first().json.VIDEOS_PER_THEME} distinct 6-8 second video prompts for this theme. Prompts must be vivid and visual, abstract/nature/human-subject only, no on-screen text, no close-up faces, no smoking or vaping imagery — each prompt also doubles as a still-frame description for a matching thumbnail image. Respond with ONLY a JSON array of prompt strings — no markdown, no commentary.` }] }) }}",
-        "options": {}
+        "jsonBody": "={{ JSON.stringify({ model: \"claude-haiku-4-5-20251001\", max_tokens: 1024, messages: [{ role: \"user\", content: `You are generating short cinematic AI video prompts for a smoking/vaping cessation app's content feed. Theme: \"${$json.theme}\". Generate exactly ${$('Set Config').first().json.VIDEOS_PER_THEME} distinct 6-8 second video prompts for this theme. Prompts must be vivid and visual, abstract/nature/human-subject only, no on-screen text, no close-up faces, no smoking or vaping imagery \u2014 each prompt also doubles as a still-frame description for a matching thumbnail image. Respond with ONLY a JSON array of prompt strings \u2014 no markdown, no commentary.` }] }) }}",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth"
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "K1WqxgX2EaEGui4m",
+          "name": "Anthropic API (BattleBuddy)"
+        }
       }
     },
     {
@@ -105,7 +136,10 @@
       "name": "Parse Claude Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [560, 80],
+      "position": [
+        560,
+        80
+      ],
       "parameters": {
         "mode": "runOnceForEachItem",
         "jsCode": "const theme = $('Split By Theme').item.json.theme;\nconst raw = $json.content[0].text;\nconst match = raw.match(/\\[[\\s\\S]*\\]/);\nconst prompts = JSON.parse(match ? match[0] : raw);\nreturn prompts.map((prompt) => ({ json: { theme, prompt } }));"
@@ -116,7 +150,10 @@
       "name": "Split By Prompt",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [800, 80],
+      "position": [
+        800,
+        80
+      ],
       "parameters": {
         "batchSize": 1,
         "options": {}
@@ -127,21 +164,34 @@
       "name": "Generate Video (Veo)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1040, 80],
+      "position": [
+        1040,
+        80
+      ],
       "parameters": {
         "method": "POST",
         "url": "https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-generate-preview:predictLongRunning",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "x-goog-api-key", "value": "={{ $env.GOOGLE_AI_API_KEY }}" },
-            { "name": "content-type", "value": "application/json" }
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ instances: [{ prompt: $json.prompt }], parameters: { aspectRatio: \"9:16\", durationSeconds: 8, personGeneration: \"allow_adult\" } }) }}",
-        "options": {}
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth"
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "tPeRNHaM5E7azcrX",
+          "name": "Google AI API (BattleBuddy)"
+        }
       }
     },
     {
@@ -149,7 +199,10 @@
       "name": "Store Operation Name",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [1280, 80],
+      "position": [
+        1280,
+        80
+      ],
       "parameters": {
         "assignments": {
           "assignments": [
@@ -181,21 +234,34 @@
       "name": "Generate Thumbnail (Imagen)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1520, 80],
+      "position": [
+        1520,
+        80
+      ],
       "parameters": {
         "method": "POST",
         "url": "https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "x-goog-api-key", "value": "={{ $env.GOOGLE_AI_API_KEY }}" },
-            { "name": "content-type", "value": "application/json" }
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ instances: [{ prompt: $('Store Operation Name').item.json.prompt }], parameters: { sampleCount: 1, aspectRatio: \"9:16\" } }) }}",
-        "options": {}
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth"
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "tPeRNHaM5E7azcrX",
+          "name": "Google AI API (BattleBuddy)"
+        }
       }
     },
     {
@@ -203,7 +269,10 @@
       "name": "Decode Thumbnail",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1760, 80],
+      "position": [
+        1760,
+        80
+      ],
       "parameters": {
         "mode": "runOnceForEachItem",
         "jsCode": "const base64 = $json.predictions[0].bytesBase64Encoded;\nconst buffer = Buffer.from(base64, 'base64');\nconst binary = await $helpers.prepareBinaryData(buffer, 'thumbnail.png', 'image/png');\nreturn {\n  json: {\n    operationName: $('Store Operation Name').item.json.operationName,\n    theme: $('Store Operation Name').item.json.theme,\n    prompt: $('Store Operation Name').item.json.prompt,\n  },\n  binary: { data: binary },\n};"
@@ -214,7 +283,10 @@
       "name": "Upload Thumbnail to R2",
       "type": "n8n-nodes-base.s3",
       "typeVersion": 1,
-      "position": [2000, 80],
+      "position": [
+        2000,
+        80
+      ],
       "parameters": {
         "operation": "upload",
         "bucketName": "battlebuddy",
@@ -225,7 +297,7 @@
       },
       "credentials": {
         "s3": {
-          "id": "r2-s3-credentials",
+          "id": "B9S7zM0AtIOE1oq3",
           "name": "Cloudflare R2 (S3-compatible)"
         }
       }
@@ -235,7 +307,10 @@
       "name": "Wait 30s",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [2240, 80],
+      "position": [
+        2240,
+        80
+      ],
       "parameters": {
         "amount": 30,
         "unit": "seconds"
@@ -246,17 +321,26 @@
       "name": "Poll Veo Operation",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2480, 80],
+      "position": [
+        2480,
+        80
+      ],
       "parameters": {
         "method": "GET",
         "url": "=https://generativelanguage.googleapis.com/v1beta/{{ $('Store Operation Name').item.json.operationName }}",
         "sendHeaders": true,
         "headerParameters": {
-          "parameters": [
-            { "name": "x-goog-api-key", "value": "={{ $env.GOOGLE_AI_API_KEY }}" }
-          ]
+          "parameters": []
         },
-        "options": {}
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth"
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "tPeRNHaM5E7azcrX",
+          "name": "Google AI API (BattleBuddy)"
+        }
       }
     },
     {
@@ -264,7 +348,10 @@
       "name": "Read Poll Status",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2720, 80],
+      "position": [
+        2720,
+        80
+      ],
       "parameters": {
         "mode": "runOnceForEachItem",
         "jsCode": "const op = $json;\nlet pollAttempts = 0;\ntry {\n  pollAttempts = $('Increment Attempt').item.json.pollAttempts;\n} catch (e) {\n  pollAttempts = 0;\n}\nlet status = 'RUNNING';\nlet output = null;\nlet failureReason = null;\nif (op.done) {\n  if (op.error) {\n    status = 'FAILED';\n    failureReason = op.error.message || JSON.stringify(op.error);\n  } else {\n    const samples = (op.response && op.response.generateVideoResponse && op.response.generateVideoResponse.generatedSamples) || [];\n    const uri = samples[0] && samples[0].video && samples[0].video.uri;\n    if (uri) {\n      status = 'SUCCEEDED';\n      output = [uri];\n    } else {\n      status = 'FAILED';\n      failureReason = 'Operation done but no video URI in response';\n    }\n  }\n}\nreturn {\n  json: {\n    status,\n    output,\n    failureReason,\n    operationName: $('Store Operation Name').item.json.operationName,\n    theme: $('Store Operation Name').item.json.theme,\n    prompt: $('Store Operation Name').item.json.prompt,\n    pollAttempts,\n  },\n};"
@@ -275,7 +362,10 @@
       "name": "IF Succeeded",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [2960, 80],
+      "position": [
+        2960,
+        80
+      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -288,7 +378,10 @@
               "id": "succeeded-cond",
               "leftValue": "={{ $json.status }}",
               "rightValue": "SUCCEEDED",
-              "operator": { "type": "string", "operation": "equals" }
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -301,7 +394,10 @@
       "name": "IF Failed",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [2960, 320],
+      "position": [
+        2960,
+        320
+      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -314,7 +410,10 @@
               "id": "failed-cond",
               "leftValue": "={{ $json.status }}",
               "rightValue": "FAILED",
-              "operator": { "type": "string", "operation": "equals" }
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -327,7 +426,10 @@
       "name": "Increment Attempt",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3200, 440],
+      "position": [
+        3200,
+        440
+      ],
       "parameters": {
         "mode": "runOnceForEachItem",
         "jsCode": "return {\n  json: {\n    ...$json,\n    pollAttempts: $json.pollAttempts + 1,\n  },\n};"
@@ -338,7 +440,10 @@
       "name": "Check Retry Limit",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [3440, 440],
+      "position": [
+        3440,
+        440
+      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -351,7 +456,10 @@
               "id": "retry-limit-cond",
               "leftValue": "={{ $json.pollAttempts }}",
               "rightValue": 10,
-              "operator": { "type": "number", "operation": "lt" }
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
             }
           ],
           "combinator": "and"
@@ -364,15 +472,16 @@
       "name": "Download Video",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3200, -40],
+      "position": [
+        3200,
+        -40
+      ],
       "parameters": {
         "method": "GET",
         "url": "={{ $json.output[0] }}",
         "sendHeaders": true,
         "headerParameters": {
-          "parameters": [
-            { "name": "x-goog-api-key", "value": "={{ $env.GOOGLE_AI_API_KEY }}" }
-          ]
+          "parameters": []
         },
         "options": {
           "response": {
@@ -380,6 +489,14 @@
               "responseFormat": "file"
             }
           }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth"
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "tPeRNHaM5E7azcrX",
+          "name": "Google AI API (BattleBuddy)"
         }
       }
     },
@@ -388,7 +505,10 @@
       "name": "Upload to R2",
       "type": "n8n-nodes-base.s3",
       "typeVersion": 1,
-      "position": [3440, -40],
+      "position": [
+        3440,
+        -40
+      ],
       "parameters": {
         "operation": "upload",
         "bucketName": "battlebuddy",
@@ -399,7 +519,7 @@
       },
       "credentials": {
         "s3": {
-          "id": "r2-s3-credentials",
+          "id": "B9S7zM0AtIOE1oq3",
           "name": "Cloudflare R2 (S3-compatible)"
         }
       }
@@ -409,23 +529,38 @@
       "name": "Save to Supabase",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3680, -40],
+      "position": [
+        3680,
+        -40
+      ],
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/content_videos",
+        "url": "=https://djskxjjioklsvusgzfeu.supabase.co/rest/v1/content_videos",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}" },
-            { "name": "content-type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=representation" }
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ r2_url: `${$env.CF_R2_PUBLIC_URL}/videos/${$('Store Operation Name').item.json.theme.replace(/\\s+/g, '-')}/${$('Store Operation Name').item.json.operationName.split('/').pop()}.mp4`, r2_key: `videos/${$('Store Operation Name').item.json.theme.replace(/\\s+/g, '-')}/${$('Store Operation Name').item.json.operationName.split('/').pop()}.mp4`, r2_thumbnail_url: `${$env.CF_R2_PUBLIC_URL}/images/${$('Store Operation Name').item.json.theme.replace(/\\s+/g, '-')}/${$('Store Operation Name').item.json.operationName.split('/').pop()}.png`, theme: $('Store Operation Name').item.json.theme, tags: [], prompt: $('Store Operation Name').item.json.prompt, duration_seconds: 8, video_api: $('Set Config').first().json.VIDEO_API, generation_id: $('Store Operation Name').item.json.operationName, status: \"active\" }) }}",
-        "options": {}
+        "jsonBody": "={{ JSON.stringify({ r2_url: `https://pub-3003aedc016e43dc8f25c672332623a7.r2.dev/videos/${$('Store Operation Name').item.json.theme.replace(/\\s+/g, '-')}/${$('Store Operation Name').item.json.operationName.split('/').pop()}.mp4`, r2_key: `videos/${$('Store Operation Name').item.json.theme.replace(/\\s+/g, '-')}/${$('Store Operation Name').item.json.operationName.split('/').pop()}.mp4`, r2_thumbnail_url: `https://pub-3003aedc016e43dc8f25c672332623a7.r2.dev/images/${$('Store Operation Name').item.json.theme.replace(/\\s+/g, '-')}/${$('Store Operation Name').item.json.operationName.split('/').pop()}.png`, theme: $('Store Operation Name').item.json.theme, tags: [], prompt: $('Store Operation Name').item.json.prompt, duration_seconds: 8, video_api: $('Set Config').first().json.VIDEO_API, generation_id: $('Store Operation Name').item.json.operationName, status: \"active\" }) }}",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth"
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "wpnRBf4akMba06UF",
+          "name": "Supabase Service Role (BattleBuddy)"
+        }
       }
     },
     {
@@ -433,7 +568,10 @@
       "name": "Wait Between Videos",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [3920, -40],
+      "position": [
+        3920,
+        -40
+      ],
       "parameters": {
         "amount": 5,
         "unit": "seconds"
@@ -444,23 +582,38 @@
       "name": "Log Failure to Supabase",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3680, 440],
+      "position": [
+        3680,
+        440
+      ],
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/content_videos",
+        "url": "=https://djskxjjioklsvusgzfeu.supabase.co/rest/v1/content_videos",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}" },
-            { "name": "content-type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=representation" }
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ r2_url: \"\", r2_key: `failed/${$json.operationName.split('/').pop()}-${$json.status || 'timeout'}-attempt${$json.pollAttempts}-${Date.now()}`, theme: $json.theme, tags: [], prompt: $json.prompt, duration_seconds: null, video_api: $('Set Config').first().json.VIDEO_API, generation_id: $json.operationName, status: \"failed\" }) }}",
-        "options": {}
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth"
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "wpnRBf4akMba06UF",
+          "name": "Supabase Service Role (BattleBuddy)"
+        }
       }
     },
     {
@@ -468,7 +621,10 @@
       "name": "Error Trigger",
       "type": "n8n-nodes-base.errorTrigger",
       "typeVersion": 1,
-      "position": [80, 480],
+      "position": [
+        80,
+        480
+      ],
       "parameters": {}
     },
     {
@@ -476,116 +632,351 @@
       "name": "Log Critical Failure",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [320, 480],
+      "position": [
+        320,
+        480
+      ],
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/content_videos",
+        "url": "=https://djskxjjioklsvusgzfeu.supabase.co/rest/v1/content_videos",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}" },
-            { "name": "content-type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=representation" }
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ r2_url: \"\", r2_key: `failed/workflow-error-${Date.now()}`, theme: \"unknown\", tags: [], prompt: $json.execution?.error?.message || \"workflow error\", duration_seconds: null, video_api: \"veo\", generation_id: $json.execution?.id || null, status: \"failed\" }) }}",
-        "options": {}
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth"
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "wpnRBf4akMba06UF",
+          "name": "Supabase Service Role (BattleBuddy)"
+        }
       }
     }
   ],
   "connections": {
     "Schedule Trigger": {
-      "main": [[{ "node": "Set Config", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Set Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Manual Trigger": {
-      "main": [[{ "node": "Set Config", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Set Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Set Config": {
-      "main": [[{ "node": "Split By Theme", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Split By Theme",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Split By Theme": {
       "main": [
-        [{ "node": "All Themes Done", "type": "main", "index": 0 }],
-        [{ "node": "Generate Prompts (Claude)", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "All Themes Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Prompts (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Generate Prompts (Claude)": {
-      "main": [[{ "node": "Parse Claude Response", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Parse Claude Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Parse Claude Response": {
-      "main": [[{ "node": "Split By Prompt", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Split By Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Split By Prompt": {
       "main": [
-        [{ "node": "Split By Theme", "type": "main", "index": 0 }],
-        [{ "node": "Generate Video (Veo)", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Split By Theme",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Video (Veo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Generate Video (Veo)": {
-      "main": [[{ "node": "Store Operation Name", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Store Operation Name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Store Operation Name": {
-      "main": [[{ "node": "Generate Thumbnail (Imagen)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Generate Thumbnail (Imagen)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Generate Thumbnail (Imagen)": {
-      "main": [[{ "node": "Decode Thumbnail", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Decode Thumbnail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Decode Thumbnail": {
-      "main": [[{ "node": "Upload Thumbnail to R2", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Upload Thumbnail to R2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Upload Thumbnail to R2": {
-      "main": [[{ "node": "Wait 30s", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Wait 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Wait 30s": {
-      "main": [[{ "node": "Poll Veo Operation", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Poll Veo Operation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Poll Veo Operation": {
-      "main": [[{ "node": "Read Poll Status", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Read Poll Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Read Poll Status": {
-      "main": [[{ "node": "IF Succeeded", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "IF Succeeded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "IF Succeeded": {
       "main": [
-        [{ "node": "Download Video", "type": "main", "index": 0 }],
-        [{ "node": "IF Failed", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Download Video",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "IF Failed": {
       "main": [
-        [{ "node": "Log Failure to Supabase", "type": "main", "index": 0 }],
-        [{ "node": "Increment Attempt", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Log Failure to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Increment Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Increment Attempt": {
-      "main": [[{ "node": "Check Retry Limit", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Check Retry Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Check Retry Limit": {
       "main": [
-        [{ "node": "Wait 30s", "type": "main", "index": 0 }],
-        [{ "node": "Log Failure to Supabase", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Wait 30s",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Failure to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Download Video": {
-      "main": [[{ "node": "Upload to R2", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Upload to R2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Upload to R2": {
-      "main": [[{ "node": "Save to Supabase", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Save to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Save to Supabase": {
-      "main": [[{ "node": "Wait Between Videos", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Wait Between Videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Wait Between Videos": {
-      "main": [[{ "node": "Split By Prompt", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Split By Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Log Failure to Supabase": {
-      "main": [[{ "node": "Wait Between Videos", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Wait Between Videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Error Trigger": {
-      "main": [[{ "node": "Log Critical Failure", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Log Critical Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
