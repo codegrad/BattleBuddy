@@ -231,7 +231,7 @@
     },
     {
       "id": "a1b2c3d4-0025-4000-8000-000000000025",
-      "name": "Generate Thumbnail (Imagen)",
+      "name": "Generate Thumbnail (Gemini)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -240,7 +240,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -252,7 +252,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ instances: [{ prompt: $('Store Operation Name').item.json.prompt }], parameters: { sampleCount: 1, aspectRatio: \"9:16\" } }) }}",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: $('Store Operation Name').item.json.prompt }] }], generationConfig: { responseModalities: [\"IMAGE\"] } }) }}",
         "options": {},
         "authentication": "genericCredentialType",
         "genericAuthType": "httpCustomAuth"
@@ -275,7 +275,7 @@
       ],
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const base64 = $json.predictions[0].bytesBase64Encoded;\nconst buffer = Buffer.from(base64, 'base64');\nconst binary = await $helpers.prepareBinaryData(buffer, 'thumbnail.png', 'image/png');\nreturn {\n  json: {\n    operationName: $('Store Operation Name').item.json.operationName,\n    theme: $('Store Operation Name').item.json.theme,\n    prompt: $('Store Operation Name').item.json.prompt,\n  },\n  binary: { data: binary },\n};"
+        "jsCode": "const parts = ($json.candidates && $json.candidates[0] && $json.candidates[0].content && $json.candidates[0].content.parts) || [];\nconst imagePart = parts.find((p) => p.inlineData && p.inlineData.data);\nif (!imagePart) {\n  throw new Error('No image data in Gemini response');\n}\nconst base64 = imagePart.inlineData.data;\nconst buffer = Buffer.from(base64, 'base64');\nconst binary = await $helpers.prepareBinaryData(buffer, 'thumbnail.png', imagePart.inlineData.mimeType || 'image/png');\nreturn {\n  json: {\n    operationName: $('Store Operation Name').item.json.operationName,\n    theme: $('Store Operation Name').item.json.theme,\n    prompt: $('Store Operation Name').item.json.prompt,\n  },\n  binary: { data: binary },\n};"
       }
     },
     {
@@ -774,18 +774,7 @@
       "main": [
         [
           {
-            "node": "Generate Thumbnail (Imagen)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Generate Thumbnail (Imagen)": {
-      "main": [
-        [
-          {
-            "node": "Decode Thumbnail",
+            "node": "Generate Thumbnail (Gemini)",
             "type": "main",
             "index": 0
           }
@@ -972,6 +961,17 @@
         [
           {
             "node": "Log Critical Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Thumbnail (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Decode Thumbnail",
             "type": "main",
             "index": 0
           }
