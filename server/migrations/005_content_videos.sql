@@ -9,8 +9,8 @@ create table if not exists content_videos (
   tags text[] default '{}',          -- searchable tags
   prompt text not null,              -- the generation prompt used
   duration_seconds int,              -- video length
-  video_api text not null,           -- 'runway' | 'kling' | 'luma'
-  generation_id text,                -- API's job/task ID
+  video_api text not null,           -- 'veo' | 'runway' | 'kling' | 'luma'
+  generation_id text,                -- API's operation/job/task ID
   status text not null default 'active',  -- 'active' | 'archived' | 'failed'
   created_at timestamptz default now()
 );

@@ -1,9 +1,10 @@
 # Content Video Themes
 
 Taxonomy for the AI-generated video library that powers the swipe-right home feed.
-Each theme is a content pillar; prompts are fed directly into Runway/Kling for
-generation. All clips are cinematic, abstract/nature/human-subject (no on-camera
-text, no logos, no smoking imagery — replacement and forward-motion only), 5–8
+Each theme is a content pillar; prompts are fed directly into Veo 3.1 for video
+generation and reused as the still-frame description for the matching Imagen 4.0
+thumbnail. All clips are cinematic, abstract/nature/human-subject (no on-camera
+text, no logos, no smoking imagery — replacement and forward-motion only), 6–8
 seconds, vertical 9:16.
 
 Tags are lowercase, hyphenated, used for search/filtering in `content_videos.tags`.
@@ -155,4 +156,4 @@ Resolve without grit-teeth intensity — calm, grounded resilience.
 - No on-screen text, logos, brand marks, or smoking/vaping paraphernalia of any kind.
 - No people's faces in close-up unless fully silhouetted or backlit (keeps content universal, avoids uncanny-valley AI faces).
 - Favor slow motion and steady camera moves — the feed should feel calming to swipe through, never frenetic.
-- Each prompt should be self-contained and renderable as a single 5–8 second clip with no narrative dependency on prior clips.
+- Each prompt should be self-contained and renderable as a single 6–8 second clip with no narrative dependency on prior clips.

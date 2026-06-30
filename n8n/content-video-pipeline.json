@@ -39,7 +39,7 @@
               "id": "cfg-video-api",
               "name": "VIDEO_API",
               "type": "string",
-              "value": "runway"
+              "value": "veo"
             },
             {
               "id": "cfg-videos-per-theme",
@@ -96,7 +96,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: \"claude-haiku-4-5-20251001\", max_tokens: 1024, messages: [{ role: \"user\", content: `You are generating short cinematic AI video prompts for a smoking/vaping cessation app's content feed. Theme: \"${$json.theme}\". Generate exactly ${$('Set Config').first().json.VIDEOS_PER_THEME} distinct 5-8 second video prompts for this theme. Prompts must be vivid and visual, abstract/nature/human-subject only, no on-screen text, no close-up faces, no smoking or vaping imagery. Respond with ONLY a JSON array of prompt strings — no markdown, no commentary.` }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: \"claude-haiku-4-5-20251001\", max_tokens: 1024, messages: [{ role: \"user\", content: `You are generating short cinematic AI video prompts for a smoking/vaping cessation app's content feed. Theme: \"${$json.theme}\". Generate exactly ${$('Set Config').first().json.VIDEOS_PER_THEME} distinct 6-8 second video prompts for this theme. Prompts must be vivid and visual, abstract/nature/human-subject only, no on-screen text, no close-up faces, no smoking or vaping imagery — each prompt also doubles as a still-frame description for a matching thumbnail image. Respond with ONLY a JSON array of prompt strings — no markdown, no commentary.` }] }) }}",
         "options": {}
       }
     },
@@ -124,30 +124,29 @@
     },
     {
       "id": "a1b2c3d4-0009-4000-8000-000000000009",
-      "name": "Generate Video (Runway)",
+      "name": "Generate Video (Veo)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [1040, 80],
       "parameters": {
         "method": "POST",
-        "url": "https://api.dev.runwayml.com/v1/text_to_video",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-generate-preview:predictLongRunning",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{ $env.RUNWAY_API_KEY }}" },
-            { "name": "X-Runway-Version", "value": "2024-11-06" },
+            { "name": "x-goog-api-key", "value": "={{ $env.GOOGLE_AI_API_KEY }}" },
             { "name": "content-type", "value": "application/json" }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: \"gen3a_turbo\", promptText: $json.prompt, duration: 5, ratio: \"768:1344\" }) }}",
+        "jsonBody": "={{ JSON.stringify({ instances: [{ prompt: $json.prompt }], parameters: { aspectRatio: \"9:16\", durationSeconds: 8, personGeneration: \"allow_adult\" } }) }}",
         "options": {}
       }
     },
     {
       "id": "a1b2c3d4-0010-4000-8000-000000000010",
-      "name": "Store Task ID",
+      "name": "Store Operation Name",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [1280, 80],
@@ -155,19 +154,19 @@
         "assignments": {
           "assignments": [
             {
-              "id": "task-id",
-              "name": "taskId",
+              "id": "op-name",
+              "name": "operationName",
               "type": "string",
-              "value": "={{ $json.id }}"
+              "value": "={{ $json.name }}"
             },
             {
-              "id": "task-theme",
+              "id": "op-theme",
               "name": "theme",
               "type": "string",
               "value": "={{ $('Split By Prompt').item.json.theme }}"
             },
             {
-              "id": "task-prompt",
+              "id": "op-prompt",
               "name": "prompt",
               "type": "string",
               "value": "={{ $('Split By Prompt').item.json.prompt }}"
@@ -178,11 +177,65 @@
       }
     },
     {
+      "id": "a1b2c3d4-0025-4000-8000-000000000025",
+      "name": "Generate Thumbnail (Imagen)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, 80],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-goog-api-key", "value": "={{ $env.GOOGLE_AI_API_KEY }}" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ instances: [{ prompt: $('Store Operation Name').item.json.prompt }], parameters: { sampleCount: 1, aspectRatio: \"9:16\" } }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0026-4000-8000-000000000026",
+      "name": "Decode Thumbnail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 80],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const base64 = $json.predictions[0].bytesBase64Encoded;\nconst buffer = Buffer.from(base64, 'base64');\nconst binary = await $helpers.prepareBinaryData(buffer, 'thumbnail.png', 'image/png');\nreturn {\n  json: {\n    operationName: $('Store Operation Name').item.json.operationName,\n    theme: $('Store Operation Name').item.json.theme,\n    prompt: $('Store Operation Name').item.json.prompt,\n  },\n  binary: { data: binary },\n};"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0027-4000-8000-000000000027",
+      "name": "Upload Thumbnail to R2",
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [2000, 80],
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "battlebuddy-content",
+        "fileName": "=images/{{ $json.theme.replace(/\\s+/g, '-') }}/{{ $json.operationName.split('/').pop() }}.png",
+        "binaryData": true,
+        "binaryPropertyName": "data",
+        "additionalFields": {}
+      },
+      "credentials": {
+        "s3": {
+          "id": "r2-s3-credentials",
+          "name": "Cloudflare R2 (S3-compatible)"
+        }
+      }
+    },
+    {
       "id": "a1b2c3d4-0011-4000-8000-000000000011",
       "name": "Wait 30s",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [1520, 80],
+      "position": [2240, 80],
       "parameters": {
         "amount": 30,
         "unit": "seconds"
@@ -190,18 +243,17 @@
     },
     {
       "id": "a1b2c3d4-0012-4000-8000-000000000012",
-      "name": "Poll Video Status",
+      "name": "Poll Veo Operation",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1760, 80],
+      "position": [2480, 80],
       "parameters": {
         "method": "GET",
-        "url": "=https://api.dev.runwayml.com/v1/tasks/{{ $('Store Task ID').item.json.taskId }}",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/{{ $('Store Operation Name').item.json.operationName }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{ $env.RUNWAY_API_KEY }}" },
-            { "name": "X-Runway-Version", "value": "2024-11-06" }
+            { "name": "x-goog-api-key", "value": "={{ $env.GOOGLE_AI_API_KEY }}" }
           ]
         },
         "options": {}
@@ -212,10 +264,10 @@
       "name": "Read Poll Status",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2000, 80],
+      "position": [2720, 80],
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const pollResponse = $json;\nlet pollAttempts = 0;\ntry {\n  pollAttempts = $('Increment Attempt').item.json.pollAttempts;\n} catch (e) {\n  pollAttempts = 0;\n}\nreturn {\n  json: {\n    status: pollResponse.status,\n    output: pollResponse.output || null,\n    failureReason: pollResponse.failure || pollResponse.failureCode || null,\n    taskId: $('Store Task ID').item.json.taskId,\n    theme: $('Store Task ID').item.json.theme,\n    prompt: $('Store Task ID').item.json.prompt,\n    pollAttempts,\n  },\n};"
+        "jsCode": "const op = $json;\nlet pollAttempts = 0;\ntry {\n  pollAttempts = $('Increment Attempt').item.json.pollAttempts;\n} catch (e) {\n  pollAttempts = 0;\n}\nlet status = 'RUNNING';\nlet output = null;\nlet failureReason = null;\nif (op.done) {\n  if (op.error) {\n    status = 'FAILED';\n    failureReason = op.error.message || JSON.stringify(op.error);\n  } else {\n    const samples = (op.response && op.response.generateVideoResponse && op.response.generateVideoResponse.generatedSamples) || [];\n    const uri = samples[0] && samples[0].video && samples[0].video.uri;\n    if (uri) {\n      status = 'SUCCEEDED';\n      output = [uri];\n    } else {\n      status = 'FAILED';\n      failureReason = 'Operation done but no video URI in response';\n    }\n  }\n}\nreturn {\n  json: {\n    status,\n    output,\n    failureReason,\n    operationName: $('Store Operation Name').item.json.operationName,\n    theme: $('Store Operation Name').item.json.theme,\n    prompt: $('Store Operation Name').item.json.prompt,\n    pollAttempts,\n  },\n};"
       }
     },
     {
@@ -223,7 +275,7 @@
       "name": "IF Succeeded",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [2240, 80],
+      "position": [2960, 80],
       "parameters": {
         "conditions": {
           "options": {
@@ -249,7 +301,7 @@
       "name": "IF Failed",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [2240, 320],
+      "position": [2960, 320],
       "parameters": {
         "conditions": {
           "options": {
@@ -275,7 +327,7 @@
       "name": "Increment Attempt",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2480, 440],
+      "position": [3200, 440],
       "parameters": {
         "mode": "runOnceForEachItem",
         "jsCode": "return {\n  json: {\n    ...$json,\n    pollAttempts: $json.pollAttempts + 1,\n  },\n};"
@@ -286,7 +338,7 @@
       "name": "Check Retry Limit",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [2720, 440],
+      "position": [3440, 440],
       "parameters": {
         "conditions": {
           "options": {
@@ -312,10 +364,16 @@
       "name": "Download Video",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2480, -40],
+      "position": [3200, -40],
       "parameters": {
         "method": "GET",
         "url": "={{ $json.output[0] }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-goog-api-key", "value": "={{ $env.GOOGLE_AI_API_KEY }}" }
+          ]
+        },
         "options": {
           "response": {
             "response": {
@@ -330,11 +388,11 @@
       "name": "Upload to R2",
       "type": "n8n-nodes-base.s3",
       "typeVersion": 1,
-      "position": [2720, -40],
+      "position": [3440, -40],
       "parameters": {
         "operation": "upload",
         "bucketName": "battlebuddy-content",
-        "fileName": "=videos/{{ $('Store Task ID').item.json.theme.replace(/\\s+/g, '-') }}/{{ $('Store Task ID').item.json.taskId }}.mp4",
+        "fileName": "=videos/{{ $('Store Operation Name').item.json.theme.replace(/\\s+/g, '-') }}/{{ $('Store Operation Name').item.json.operationName.split('/').pop() }}.mp4",
         "binaryData": true,
         "binaryPropertyName": "data",
         "additionalFields": {}
@@ -351,7 +409,7 @@
       "name": "Save to Supabase",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2960, -40],
+      "position": [3680, -40],
       "parameters": {
         "method": "POST",
         "url": "={{ $env.SUPABASE_URL }}/rest/v1/content_videos",
@@ -366,7 +424,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ r2_url: `${$env.CF_R2_PUBLIC_URL}/videos/${$('Store Task ID').item.json.theme.replace(/\\s+/g, '-')}/${$('Store Task ID').item.json.taskId}.mp4`, r2_key: `videos/${$('Store Task ID').item.json.theme.replace(/\\s+/g, '-')}/${$('Store Task ID').item.json.taskId}.mp4`, theme: $('Store Task ID').item.json.theme, tags: [], prompt: $('Store Task ID').item.json.prompt, duration_seconds: 5, video_api: $('Set Config').first().json.VIDEO_API, generation_id: $('Store Task ID').item.json.taskId, status: \"active\" }) }}",
+        "jsonBody": "={{ JSON.stringify({ r2_url: `${$env.CF_R2_PUBLIC_URL}/videos/${$('Store Operation Name').item.json.theme.replace(/\\s+/g, '-')}/${$('Store Operation Name').item.json.operationName.split('/').pop()}.mp4`, r2_key: `videos/${$('Store Operation Name').item.json.theme.replace(/\\s+/g, '-')}/${$('Store Operation Name').item.json.operationName.split('/').pop()}.mp4`, r2_thumbnail_url: `${$env.CF_R2_PUBLIC_URL}/images/${$('Store Operation Name').item.json.theme.replace(/\\s+/g, '-')}/${$('Store Operation Name').item.json.operationName.split('/').pop()}.png`, theme: $('Store Operation Name').item.json.theme, tags: [], prompt: $('Store Operation Name').item.json.prompt, duration_seconds: 8, video_api: $('Set Config').first().json.VIDEO_API, generation_id: $('Store Operation Name').item.json.operationName, status: \"active\" }) }}",
         "options": {}
       }
     },
@@ -375,7 +433,7 @@
       "name": "Wait Between Videos",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [3200, -40],
+      "position": [3920, -40],
       "parameters": {
         "amount": 5,
         "unit": "seconds"
@@ -386,7 +444,7 @@
       "name": "Log Failure to Supabase",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2960, 440],
+      "position": [3680, 440],
       "parameters": {
         "method": "POST",
         "url": "={{ $env.SUPABASE_URL }}/rest/v1/content_videos",
@@ -401,7 +459,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ r2_url: \"\", r2_key: `failed/${$json.taskId}-${$json.status || 'timeout'}-attempt${$json.pollAttempts}-${Date.now()}`, theme: $json.theme, tags: [], prompt: $json.prompt, duration_seconds: null, video_api: $('Set Config').first().json.VIDEO_API, generation_id: $json.taskId, status: \"failed\" }) }}",
+        "jsonBody": "={{ JSON.stringify({ r2_url: \"\", r2_key: `failed/${$json.operationName.split('/').pop()}-${$json.status || 'timeout'}-attempt${$json.pollAttempts}-${Date.now()}`, theme: $json.theme, tags: [], prompt: $json.prompt, duration_seconds: null, video_api: $('Set Config').first().json.VIDEO_API, generation_id: $json.operationName, status: \"failed\" }) }}",
         "options": {}
       }
     },
@@ -433,7 +491,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ r2_url: \"\", r2_key: `failed/workflow-error-${Date.now()}`, theme: \"unknown\", tags: [], prompt: $json.execution?.error?.message || \"workflow error\", duration_seconds: null, video_api: \"runway\", generation_id: $json.execution?.id || null, status: \"failed\" }) }}",
+        "jsonBody": "={{ JSON.stringify({ r2_url: \"\", r2_key: `failed/workflow-error-${Date.now()}`, theme: \"unknown\", tags: [], prompt: $json.execution?.error?.message || \"workflow error\", duration_seconds: null, video_api: \"veo\", generation_id: $json.execution?.id || null, status: \"failed\" }) }}",
         "options": {}
       }
     }
@@ -463,19 +521,28 @@
     "Split By Prompt": {
       "main": [
         [{ "node": "Split By Theme", "type": "main", "index": 0 }],
-        [{ "node": "Generate Video (Runway)", "type": "main", "index": 0 }]
+        [{ "node": "Generate Video (Veo)", "type": "main", "index": 0 }]
       ]
     },
-    "Generate Video (Runway)": {
-      "main": [[{ "node": "Store Task ID", "type": "main", "index": 0 }]]
+    "Generate Video (Veo)": {
+      "main": [[{ "node": "Store Operation Name", "type": "main", "index": 0 }]]
     },
-    "Store Task ID": {
+    "Store Operation Name": {
+      "main": [[{ "node": "Generate Thumbnail (Imagen)", "type": "main", "index": 0 }]]
+    },
+    "Generate Thumbnail (Imagen)": {
+      "main": [[{ "node": "Decode Thumbnail", "type": "main", "index": 0 }]]
+    },
+    "Decode Thumbnail": {
+      "main": [[{ "node": "Upload Thumbnail to R2", "type": "main", "index": 0 }]]
+    },
+    "Upload Thumbnail to R2": {
       "main": [[{ "node": "Wait 30s", "type": "main", "index": 0 }]]
     },
     "Wait 30s": {
-      "main": [[{ "node": "Poll Video Status", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Poll Veo Operation", "type": "main", "index": 0 }]]
     },
-    "Poll Video Status": {
+    "Poll Veo Operation": {
       "main": [[{ "node": "Read Poll Status", "type": "main", "index": 0 }]]
     },
     "Read Poll Status": {

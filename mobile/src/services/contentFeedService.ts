@@ -5,11 +5,12 @@ export interface ContentVideo {
   id: string;
   r2Url: string;
   r2Key: string;
+  r2ThumbnailUrl: string | null;
   theme: string;
   tags: string[];
   prompt: string;
   durationSeconds: number | null;
-  videoApi: 'runway' | 'kling' | 'luma';
+  videoApi: 'veo' | 'runway' | 'kling' | 'luma';
   generationId: string | null;
   status: 'active' | 'archived' | 'failed';
   createdAt: string;
@@ -19,6 +20,7 @@ interface ContentVideoRow {
   id: string;
   r2_url: string;
   r2_key: string;
+  r2_thumbnail_url: string | null;
   theme: string;
   tags: string[] | null;
   prompt: string;
@@ -34,6 +36,7 @@ function toContentVideo(row: ContentVideoRow): ContentVideo {
     id: row.id,
     r2Url: row.r2_url,
     r2Key: row.r2_key,
+    r2ThumbnailUrl: row.r2_thumbnail_url,
     theme: row.theme,
     tags: row.tags ?? [],
     prompt: row.prompt,
