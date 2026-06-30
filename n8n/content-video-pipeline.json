@@ -141,8 +141,8 @@
         80
       ],
       "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const theme = $('Split By Theme').item.json.theme;\nconst raw = $json.content[0].text;\nconst match = raw.match(/\\[[\\s\\S]*\\]/);\nconst prompts = JSON.parse(match ? match[0] : raw);\nreturn prompts.map((prompt) => ({ json: { theme, prompt } }));"
+        "mode": "runOnceForAllItems",
+        "jsCode": "const theme = $('Split By Theme').first().json.theme;\nconst raw = $input.first().json.content[0].text;\nconst match = raw.match(/\\[[\\s\\S]*\\]/);\nconst prompts = JSON.parse(match ? match[0] : raw);\nreturn prompts.map((prompt) => ({ json: { theme, prompt } }));"
       }
     },
     {
