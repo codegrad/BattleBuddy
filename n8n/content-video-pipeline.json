@@ -275,7 +275,7 @@
       ],
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const parts = ($json.candidates && $json.candidates[0] && $json.candidates[0].content && $json.candidates[0].content.parts) || [];\nconst imagePart = parts.find((p) => p.inlineData && p.inlineData.data);\nif (!imagePart) {\n  throw new Error('No image data in Gemini response');\n}\nconst base64 = imagePart.inlineData.data;\nconst buffer = Buffer.from(base64, 'base64');\nconst binary = await $helpers.prepareBinaryData(buffer, 'thumbnail.png', imagePart.inlineData.mimeType || 'image/png');\nreturn {\n  json: {\n    operationName: $('Store Operation Name').item.json.operationName,\n    theme: $('Store Operation Name').item.json.theme,\n    prompt: $('Store Operation Name').item.json.prompt,\n  },\n  binary: { data: binary },\n};"
+        "jsCode": "const parts = ($json.candidates && $json.candidates[0] && $json.candidates[0].content && $json.candidates[0].content.parts) || [];\nconst imagePart = parts.find((p) => p.inlineData && p.inlineData.data);\nif (!imagePart) {\n  throw new Error('No image data in Gemini response');\n}\nconst base64 = imagePart.inlineData.data;\nconst buffer = Buffer.from(base64, 'base64');\nconst binary = await helpers.prepareBinaryData(buffer, 'thumbnail.png', imagePart.inlineData.mimeType || 'image/png');\nreturn {\n  json: {\n    operationName: $('Store Operation Name').item.json.operationName,\n    theme: $('Store Operation Name').item.json.theme,\n    prompt: $('Store Operation Name').item.json.prompt,\n  },\n  binary: { data: binary },\n};"
       }
     },
     {
@@ -665,6 +665,20 @@
           "name": "Supabase Service Role (BattleBuddy)"
         }
       }
+    },
+    {
+      "id": "195536f0-8c25-4ad5-a7cf-c4c9a44547f4",
+      "name": "Expand Themes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $input.first().json;\nreturn cfg.THEMES.map((theme) => ({\n  json: { theme, VIDEOS_PER_THEME: cfg.VIDEOS_PER_THEME, VIDEO_API: cfg.VIDEO_API },\n}));"
+      }
     }
   ],
   "connections": {
@@ -694,7 +708,7 @@
       "main": [
         [
           {
-            "node": "Split By Theme",
+            "node": "Expand Themes",
             "type": "main",
             "index": 0
           }
@@ -972,6 +986,17 @@
         [
           {
             "node": "Decode Thumbnail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand Themes": {
+      "main": [
+        [
+          {
+            "node": "Split By Theme",
             "type": "main",
             "index": 0
           }
