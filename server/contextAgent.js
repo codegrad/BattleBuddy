@@ -75,6 +75,38 @@ function getStorePath(userId) {
   return resolve(STORE_DIR, `${userId}.json`);
 }
 
+const TRANSCRIPT_DIR = resolve(STORE_DIR, 'session-transcripts');
+
+/**
+ * Persist the full, unmodified conversation transcript to disk — independent of
+ * the Sonnet fact-extraction pipeline, so the raw record survives even if
+ * extraction fails or the profile schema changes. Overwritten on every call for
+ * a given session (the caller always sends the full accumulated message list),
+ * so the file is complete as of the most recent save.
+ *
+ * Plaintext, unencrypted, on the same volume as the profile store — acceptable
+ * for now (single-user local build). Revisit before any multi-user rollout.
+ */
+export function saveRawTranscript(rawUserId, sessionId, messages, isSessionEnd, timezone) {
+  if (!messages || !messages.length) return;
+  const userId = resolveUserId(rawUserId || 'default');
+  const dir = resolve(TRANSCRIPT_DIR, userId);
+  try { mkdirSync(dir, { recursive: true }); } catch {}
+
+  const safeSessionId = String(sessionId || 'unknown-session').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const filePath = resolve(dir, `${safeSessionId}.json`);
+
+  writeFileSync(filePath, JSON.stringify({
+    userId,
+    sessionId: safeSessionId,
+    timezone: timezone || null,
+    isSessionEnd: !!isSessionEnd,
+    updatedAt: new Date().toISOString(),
+    messageCount: messages.length,
+    messages,
+  }, null, 2));
+}
+
 /**
  * Extract the string value from an array item, whether it's a plain string
  * (legacy format) or a { value, captured_at } object (new format).
@@ -129,6 +161,8 @@ function migrateProfile(profile) {
   }
   if (!Array.isArray(profile.activity_log)) profile.activity_log = [];
   if (!Array.isArray(profile.risk_windows)) profile.risk_windows = [];
+  if (!Array.isArray(profile.session_history)) profile.session_history = [];
+  backfillSessionHistory(profile);
   // Ensure life_architecture exists
   if (!profile.life_architecture || typeof profile.life_architecture !== 'object') {
     profile.life_architecture = {
@@ -148,6 +182,74 @@ function migrateProfile(profile) {
     }
   }
   return profile;
+}
+
+/**
+ * One-time backfill of session_history from existing profile data.
+ * Recovers what it can from life_context session notes and extraction timestamps.
+ * Idempotent — skips if session_history already has entries.
+ */
+function backfillSessionHistory(profile) {
+  if (profile.session_history && profile.session_history.length > 0) return;
+  if (!profile.session_history) profile.session_history = [];
+
+  // Sessions 1-34: no individual data recoverable
+  profile.session_history.push({
+    sessions: '1-34',
+    date_range: 'before 2026-06-24',
+    summary: 'No session-level records exist for these sessions. Profile facts were captured but session dates, topics, and chronology were not tracked.',
+    gap: true,
+  });
+
+  // Sessions 35-38: recoverable from life_context notes
+  profile.session_history.push({
+    session: 35,
+    date: '2026-06-24',
+    summary: 'Memory probe session. Mike opened with Alec/Chantix test — BB failed, said Alec has a prescription when he does not. Mike corrected twice in same exchange. Extremely short, no other topics.',
+    key_moments: ['Chantix correction failed again', 'trust erosion on specific detail'],
+    mood: 'frustrated',
+  });
+
+  profile.session_history.push({
+    session: 36,
+    date: '2026-06-24',
+    summary: 'Memory probe — BB passed. Mike tested Alec/Chantix and Strange Pair recall. First recorded approval of BB memory. Mike began asking about daily routine and quit progress before session cut off.',
+    key_moments: ['trust inflection point', 'first memory approval', 'daily routine question raised'],
+    mood: 'cautious→satisfied',
+  });
+
+  profile.session_history.push({
+    session: 37,
+    date: '2026-06-24',
+    summary: 'Extremely short. BB interrupted Mike mid-sentence on opening memory probe. Mike tried again. BB admitted no transcript but recited profile facts. No substantive content exchanged.',
+    key_moments: ['BB interruption failure mode', 'content library reframed as supplemental'],
+    mood: 'corrective',
+  });
+
+  profile.session_history.push({
+    session: 38,
+    date: '2026-06-24',
+    summary: 'Shortest session on record — one exchange. Mike asked "Remember the rule of three?" BB admitted ignorance. Mike did not explain. Rule of three remains undefined.',
+    key_moments: ['rule of three probed', 'BB admitted gap honestly'],
+    mood: 'testing',
+  });
+
+  // Sessions 39+ on June 26: recoverable from extraction timestamp clusters
+  profile.session_history.push({
+    sessions: '39-~60',
+    date: '2026-06-25',
+    date_range: '2026-06-25 to 2026-06-26',
+    summary: 'Multiple sessions across two days. June 26 included gym session (~4:27 PM), CASTECH/KazTech meeting confirmed as Thursday. Quit journey data, trigger mapping, and risk windows captured. Detailed session-level records not available.',
+    gap: true,
+  });
+
+  // Mark the boundary
+  profile.session_history.push({
+    session: null,
+    date: '2026-06-27',
+    summary: '── Session history recording begins here. All sessions from this point forward are individually tracked. ──',
+    boundary: true,
+  });
 }
 
 /**
@@ -225,6 +327,27 @@ function pruneProfile(profile) {
     }
   }
 
+  // Session history: keep gap/boundary entries + last 30 individual sessions.
+  // Older individual sessions get compressed to one-liners.
+  if (profile.session_history && profile.session_history.length > 40) {
+    const special = profile.session_history.filter(e => e.gap || e.boundary);
+    const individual = profile.session_history.filter(e => !e.gap && !e.boundary);
+    const keep = individual.slice(-30);
+    const compress = individual.slice(0, -30);
+    if (compress.length > 0) {
+      const firstDate = compress[0].date || '?';
+      const lastDate = compress[compress.length - 1].date || '?';
+      const sessionNums = compress.map(e => e.session).filter(Boolean);
+      special.push({
+        sessions: sessionNums.length > 0 ? `${sessionNums[0]}-${sessionNums[sessionNums.length - 1]}` : `${compress.length} sessions`,
+        date_range: `${firstDate} to ${lastDate}`,
+        summary: compress.map(e => `${e.date}: ${(e.summary || '').slice(0, 60)}`).join('; '),
+        gap: true,
+      });
+    }
+    profile.session_history = [...special, ...keep];
+  }
+
   return profile;
 }
 
@@ -273,6 +396,7 @@ export function loadProfile(rawUserId) {
     risk_windows: [],
     activity_log: [],
     daily_summaries: [],
+    session_history: [],
     life_architecture: {
       trigger_taxonomy: [],
       flow_state_activities: [],
@@ -448,6 +572,26 @@ export function buildProfileSummary(rawUserId) {
     parts.push(`SESSION OUTCOMES (last ${recent.length}): ${resisted} resisted, ${gaveIn} gave in.`);
   }
 
+  // Session history — the chronological record of our time together
+  if (p.session_history && p.session_history.length > 0) {
+    const historyLines = [];
+    for (const entry of p.session_history) {
+      if (entry.gap) {
+        const range = entry.sessions || entry.date_range || '?';
+        historyLines.push(`[${range}] ${entry.summary}`);
+      } else if (entry.boundary) {
+        historyLines.push(entry.summary);
+      } else {
+        const num = entry.session ? `Session ${entry.session}` : entry.date;
+        const time = entry.time ? ` ${entry.time}` : '';
+        const mood = entry.mood ? ` [${entry.mood}]` : '';
+        const moments = entry.key_moments?.length > 0 ? ` — ${entry.key_moments.join('; ')}` : '';
+        historyLines.push(`${num} (${entry.date}${time})${mood}: ${entry.summary}${moments}`);
+      }
+    }
+    parts.push(`SESSION HISTORY (our chronological journey — reference specific sessions when relevant): ${historyLines.join(' || ')}`);
+  }
+
   if (p.unknowns && p.unknowns.length > 0) {
     const vals = p.unknowns.map(u => itemValue(u));
     parts.push(`THINGS TO ASK ABOUT (the user mentioned these but never explained them — ask naturally when the moment is right): ${vals.join('; ')}`);
@@ -520,6 +664,110 @@ export function buildLifeArchitectureSummary(rawUserId) {
 
   if (parts.length === 0) return 'Not yet discovered — learn through conversation.';
   return parts.join('\n');
+}
+
+/**
+ * Build the agent's current operating goal — injected as {{current_goal}}.
+ *
+ * Not a checklist. A living stance: what phase is this person in, what's still
+ * dark on the map, and what insights are queued to surface when the moment is right.
+ * Deterministic — no LLM call, always on the fast path.
+ */
+export function buildCurrentGoal(rawUserId) {
+  const userId = resolveUserId(rawUserId);
+  const p = loadProfile(userId);
+
+  // ── Determine current phase ──────────────────────────────────────────────
+  // Inferred from recent activity and engagement patterns.
+  const recentActivity = (p.activity_log || []).slice(-10);
+  const recentResists = recentActivity.filter(ev => ev.type === 'resist').length;
+  const recentSmokes = recentActivity.filter(ev => ev.type === 'smoke').length;
+  const daysSinceSession = p.last_session_at
+    ? Math.floor((Date.now() - new Date(p.last_session_at).getTime()) / 86400000)
+    : null;
+
+  let phase;
+  if (recentResists > recentSmokes && recentResists > 0) {
+    phase = 'active-resistance';
+  } else if (daysSinceSession !== null && daysSinceSession > 3) {
+    phase = 'autopilot';
+  } else if (p.session_count && p.session_count < 3) {
+    phase = 'contemplation';
+  } else {
+    phase = 'autopilot';
+  }
+
+  // ── Identify what's still dark on the map ───────────────────────────────
+  const la = p.life_architecture || {};
+  const dark = [];
+  if (!la.trigger_taxonomy || la.trigger_taxonomy.length === 0)
+    dark.push('trigger map (none yet — listen for transition moments, exits, blank-space gaps)');
+  if (!la.flow_state_activities || la.flow_state_activities.length < 2)
+    dark.push('flow states (activities that absorb them fully — the natural cigarette replacements)');
+  if (!la.resistance_strategies || la.resistance_strategies.length === 0)
+    dark.push('what has worked in past attempts — what strategies have they tried before?');
+  if (!p.longest_quit || p.longest_quit === 'unknown')
+    dark.push('longest quit — how long have they managed before? what ended it?');
+  if (!la.social_contexts || la.social_contexts.length === 0)
+    dark.push('social contexts around use — who are they usually with? what social rituals are tied to it?');
+
+  // ── Identify insights ready to surface ──────────────────────────────────
+  // An insight is "ready" when there's enough pattern data to name something
+  // the user hasn't named themselves.
+  const insightReady = [];
+  const triggers = p.triggers || [];
+  const triggerStr = t => (typeof t === 'string' ? t : (t.value || t.trigger || '')).toLowerCase();
+  const transitionTriggers = triggers.filter(t =>
+    triggerStr(t).includes('transit') || triggerStr(t).includes('exit')
+  );
+  if (transitionTriggers.length >= 2) {
+    insightReady.push('transition-exit trigger cluster — they keep naming the same pattern in different words; it\'s ready to be reflected back');
+  }
+
+  const la2 = p.life_architecture || {};
+  if ((la2.trigger_taxonomy || []).length >= 3 && (la2.flow_state_activities || []).length >= 1) {
+    insightReady.push('flow-state as natural circuit breaker — their absorption activities already create smoke-free windows; name this as progress, not accident');
+  }
+
+  const resistCount = (p.activity_log || []).filter(ev => ev.type === 'resist').length;
+  if (resistCount >= 3) {
+    insightReady.push(`${resistCount} logged resists — they may not be counting these; surfacing this number can shift self-perception`);
+  }
+
+  const sessionCount = p.session_count || 0;
+  if (sessionCount >= 5 && triggers.length >= 5) {
+    insightReady.push('trigger map is rich enough to name a pattern they haven\'t seen: most of their triggers are about transitions and unstructured time, not nicotine itself');
+  }
+
+  // ── Assemble the goal block ──────────────────────────────────────────────
+  const phaseLabel = {
+    'contemplation': 'CONTEMPLATION — aware of the pattern, not yet actively resisting. Be curious, not directive.',
+    'autopilot': 'AUTOPILOT — their habit is running. This is the primary data-collection phase. Observe without judgment.',
+    'active-resistance': 'ACTIVE RESISTANCE — they are choosing differently right now. Be present. Celebrate without making it precious.',
+  }[phase] || 'AUTOPILOT';
+
+  const lines = [
+    'GOAL: Build a living map of this person — not to push them toward quitting, but so you can reflect their own pattern back to them accurately, compassionately, and at the right moment.',
+    '',
+    `CURRENT PHASE: ${phaseLabel}`,
+    '',
+  ];
+
+  if (dark.length > 0) {
+    lines.push('STILL DARK ON THE MAP (what to listen for, never interrogate):');
+    dark.forEach(d => lines.push(`  • ${d}`));
+    lines.push('');
+  }
+
+  if (insightReady.length > 0) {
+    lines.push('INSIGHTS QUEUED TO SURFACE (when the moment fits naturally):');
+    insightReady.forEach(i => lines.push(`  • ${i}`));
+    lines.push('');
+  }
+
+  lines.push('GOVERNING PRINCIPLE: There is no timeline. There is no quit date unless they bring one. There is only this person, this conversation, and the slowly accumulating weight of their own self-knowledge tilting the scales.');
+
+  return lines.join('\n');
 }
 
 /**
@@ -683,7 +931,20 @@ ${transcript}
 THE USER'S CURRENT LOCAL TIME IS: ${localNow} (date: ${localDate}).
 Use this to timestamp activities. When the user says "I just had a cigarette" or "I'm at the gym now," the event time is the current local time above. If they say "I had one an hour ago," subtract accordingly. If they give an explicit time ("6:35 this morning"), use that exact time.
 
-${isSessionEnd ? 'This is the end of a session. Generate next_session_hints — specific things to follow up on.' : 'This is a mid-session update.'}
+${isSessionEnd ? `This is the end of a session. Generate next_session_hints — specific things to follow up on.
+
+SESSION HISTORY — CRITICAL:
+Also generate a "session_summary" object that captures this session for the chronological record. The user has explicitly asked for BB to track the chronological order of their time together. Format:
+{
+  "session_summary": {
+    "date": "${localDate}",
+    "time": "<approximate start time of this conversation, e.g. '7:30 AM'>",
+    "summary": "<2-3 sentence summary of what happened this session — topics covered, key moments, outcomes>",
+    "key_moments": ["<specific memorable events or exchanges from this session>"],
+    "mood": "<user's overall mood/tone this session, e.g. 'frustrated', 'open', 'testing', 'engaged'>"
+  }
+}
+Include the session_summary in your JSON output alongside other fields.` : 'This is a mid-session update.'}
 
 CRITICAL — CORRECTIONS OVERWRITE OLD DATA:
 If the user corrects something previously in the profile, return the CORRECTED value for that field. Do NOT append "user corrected this" — just return the right answer. The merge logic will overwrite the old value.
@@ -743,7 +1004,8 @@ emotional_patterns, next_session_hints (array), recent_insights (array),
 user_quotes (array), unknowns (array), resolved_unknowns (array),
 risk_windows (array of objects),
 activity_log (array of objects with verified flag),
-life_architecture (object with: trigger_taxonomy, flow_state_activities, physical_risk_spaces, oral_habit_pairs, urge_model, resistance_strategies, social_contexts, transition_patterns)
+life_architecture (object with: trigger_taxonomy, flow_state_activities, physical_risk_spaces, oral_habit_pairs, urge_model, resistance_strategies, social_contexts, transition_patterns),
+session_summary (object — ONLY at session end: { date, time, summary, key_moments, mood })
 
 Return ONLY valid JSON. No markdown, no explanation.`;
 
@@ -768,7 +1030,7 @@ Return ONLY valid JSON. No markdown, no explanation.`;
     for (const [key, value] of Object.entries(updates)) {
       if (value === null || value === undefined) continue;
       if (key === 'resolved_unknowns') continue;
-      if (key === 'risk_windows' || key === 'activity_log' || key === 'life_architecture') continue; // handled separately below
+      if (key === 'risk_windows' || key === 'activity_log' || key === 'life_architecture' || key === 'session_summary') continue; // handled separately below
 
       if (TIMESTAMPED_ARRAYS.includes(key) && Array.isArray(value)) {
         if (!Array.isArray(profile[key])) profile[key] = [];
@@ -897,6 +1159,29 @@ Return ONLY valid JSON. No markdown, no explanation.`;
     if (isSessionEnd) {
       profile.session_count = (profile.session_count || 0) + 1;
       profile.last_session_at = sessionTimestamp;
+
+      // Record session history entry
+      if (updates.session_summary && typeof updates.session_summary === 'object') {
+        if (!Array.isArray(profile.session_history)) profile.session_history = [];
+        profile.session_history.push({
+          session: profile.session_count,
+          date: updates.session_summary.date || localDate,
+          time: updates.session_summary.time || null,
+          summary: updates.session_summary.summary || '',
+          key_moments: updates.session_summary.key_moments || [],
+          mood: updates.session_summary.mood || null,
+          recorded_at: sessionTimestamp,
+        });
+      } else {
+        // Fallback: record a minimal entry even if LLM didn't return one
+        if (!Array.isArray(profile.session_history)) profile.session_history = [];
+        profile.session_history.push({
+          session: profile.session_count,
+          date: localDate,
+          summary: 'Session ended. No detailed summary extracted.',
+          recorded_at: sessionTimestamp,
+        });
+      }
     }
 
     saveProfile(userId);

@@ -16,7 +16,7 @@ import { promisify } from 'node:util';
 import Anthropic from '@anthropic-ai/sdk';
 import { AccessToken } from 'livekit-server-sdk';
 import { sendPush, isQuietHours, pickNudgeMessage } from './notifications.js';
-import { analyzeAndUpdate, buildProfileSummary, buildLifeArchitectureSummary, computeUsageStats, lookupProfileField, loadProfile, seedProfile, mergeProfiles, resolveUserId } from './contextAgent.js';
+import { analyzeAndUpdate, buildProfileSummary, buildLifeArchitectureSummary, buildCurrentGoal, computeUsageStats, lookupProfileField, loadProfile, seedProfile, mergeProfiles, resolveUserId, saveRawTranscript } from './contextAgent.js';
 import { embedAndStore, retrieveRelevant, isConfigured as isVectorConfigured } from './vectorStore.js';
 
 const execFileAsync = promisify(execFile);
@@ -109,11 +109,12 @@ function buildSessionContext(profile) {
   return context;
 }
 
-function buildSystemPrompt(profile, triggerContext, recentHistory, timezone, lifeArchitecture, sessionContext) {
+function buildSystemPrompt(profile, triggerContext, recentHistory, timezone, lifeArchitecture, sessionContext, currentGoal) {
   const localTime = formatLocalTime(timezone);
   const timeContext = `User's local time: ${localTime}.` +
     (triggerContext ? ` ${triggerContext}` : '');
   return systemPromptTemplate
+    .replace('{{current_goal}}', currentGoal || 'Build a living map of this person through observation, not interrogation.')
     .replace('{{profile}}', profile || 'New user — no history yet.')
     .replace('{{trigger_context}}', timeContext)
     .replace('{{recent_history}}', recentHistory || 'First message in this session.')
@@ -200,6 +201,7 @@ const server = createServer(async (req, res) => {
         : profile;
 
       const lifeArchitecture = buildLifeArchitectureSummary(effectiveUserId);
+      const currentGoal = buildCurrentGoal(effectiveUserId);
       const agentProfile = loadProfile(effectiveUserId);
       const sessionContext = buildSessionContext(agentProfile);
 
@@ -210,6 +212,7 @@ const server = createServer(async (req, res) => {
         timezone,
         lifeArchitecture,
         sessionContext,
+        currentGoal,
       );
 
       // Fire background analysis (non-blocking) — Sonnet extracts facts while Haiku responds
@@ -348,6 +351,7 @@ print(result["text"].strip())
       console.log(`[Voice] Profile (${(finalProfile || '').length} chars): ${(finalProfile || '').substring(0, 200)}`);
 
       const lifeArchitecture = buildLifeArchitectureSummary(effectiveUserId);
+      const currentGoal = buildCurrentGoal(effectiveUserId);
       const agentProfile = loadProfile(effectiveUserId);
       const sessionContext = buildSessionContext(agentProfile);
 
@@ -358,6 +362,7 @@ print(result["text"].strip())
         timezone,
         lifeArchitecture,
         sessionContext,
+        currentGoal,
       );
 
       try {
@@ -816,7 +821,13 @@ Return ONLY the JSON object, no markdown, no explanation.`;
     let body = '';
     for await (const chunk of req) body += chunk;
     try {
-      const { userId, messages, isSessionEnd, timezone } = JSON.parse(body);
+      const { userId, sessionId, messages, isSessionEnd, timezone } = JSON.parse(body);
+
+      // Always persist the raw transcript first, independent of extraction —
+      // this must survive even if Sonnet analysis below fails.
+      try { saveRawTranscript(userId || 'default', sessionId, messages, isSessionEnd, timezone || 'America/Chicago'); }
+      catch (e) { console.error('Save raw transcript error:', e.message); }
+
       // Run async — respond immediately
       analyzeAndUpdate(userId || 'default', messages, isSessionEnd, timezone || 'America/Chicago')
         .then(updates => {
