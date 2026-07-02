@@ -3,6 +3,7 @@ import { View, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import ChatBottomSheet from '../../src/components/chat/ChatBottomSheet';
 import HomeButton from '../../src/components/common/HomeButton';
+import BBNavOverlay from '../../src/components/common/BBNavOverlay';
 import { useSessionStore } from '../../src/stores/sessionStore';
 import { useEngagementEngine } from '../../src/services/engagementEngine';
 import { Colors } from '../../src/theme';
@@ -32,6 +33,7 @@ export default function SessionChatScreen() {
     <View style={styles.container}>
       <ChatBottomSheet open onClose={handleClose} onSwitchToVoice={handleSwitchToVoice} />
       <HomeButton topOffset={6} />
+      <BBNavOverlay currentDirection="up" anchor="bottom-right" />
     </View>
   );
 }

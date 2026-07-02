@@ -19,8 +19,7 @@ import EntityBackground from './EntityBackground';
 import { recordSessionOutcome } from '../../services/outcomeRecorder';
 import { useAuthStore } from '../../stores/authStore';
 import { Colors } from '../../theme';
-
-type Direction = 'up' | 'down' | 'left' | 'right';
+import { NAV_ROUTES, type Direction } from '../../lib/navDirections';
 
 const BB_SIZE = 80;
 const GLOW_SIZE = BB_SIZE + 24;
@@ -32,13 +31,6 @@ const DRAG_COMMIT_RATIO = 0.25;
 const VELOCITY_COMMIT_THRESHOLD = 500;
 const DRAG_SCALE = 1.4;
 const HINT_KEY = '@bb_swipe_hint_shown';
-
-const ROUTES: Record<Direction, string> = {
-  down: '/session-voice',
-  up: '/(app)/session-chat',
-  left: '/(app)/content-feed',
-  right: '/(app)/profile',
-};
 
 // Distinct per-destination tint so the peek-through behind the departing
 // screen tells the user where the drag is headed before they let go.
@@ -148,7 +140,7 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
   );
 
   const navigateTo = useCallback((direction: Direction) => {
-    router.replace(ROUTES[direction] as never);
+    router.replace(NAV_ROUTES[direction] as never);
   }, []);
 
   const openMenu = useCallback(() => {
@@ -355,16 +347,16 @@ const styles = StyleSheet.create({
     letterSpacing: 4,
   },
   destLabelTop: {
-    top: '14%',
+    top: 14,
   },
   destLabelBottom: {
-    bottom: '14%',
+    bottom: 14,
   },
   destLabelVerticalWrap: {
     position: 'absolute',
     top: 0,
     bottom: 0,
-    width: 160,
+    width: 50,
     alignItems: 'center',
     justifyContent: 'center',
   },
