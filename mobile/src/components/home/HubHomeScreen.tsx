@@ -1,277 +1,377 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
-import {
-  GestureHandlerRootView,
-  PanGestureHandler,
-  State,
-  type PanGestureHandlerStateChangeEvent,
-} from 'react-native-gesture-handler';
-import { Ionicons } from '@expo/vector-icons';
+import { useCallback, useEffect, useState } from 'react';
+import { Pressable, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { router, useFocusEffect } from 'expo-router';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  Easing,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withSequence,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import EntityBackground, { type SwipeDirection } from './EntityBackground';
-import { LAST_OUTCOME_KEY, type LastOutcome } from '../../services/outcomeRecorder';
-import { Colors, Spacing } from '../../theme';
+import EntityBackground from './EntityBackground';
+import { recordSessionOutcome } from '../../services/outcomeRecorder';
+import { useAuthStore } from '../../stores/authStore';
+import { Colors } from '../../theme';
 
-const SWIPE_DISTANCE_THRESHOLD = 80;
-const SWIPE_VELOCITY_THRESHOLD = 300;
-const NAVIGATE_DELAY_MS = 500;
+type Direction = 'up' | 'down' | 'left' | 'right';
 
-const ROUTES: Record<Exclude<SwipeDirection, null>, string> = {
-  up: '/session-voice',
-  down: '/(app)/session-chat',
-  right: '/(app)/content-feed',
-  left: '/(app)/profile',
+const BB_SIZE = 80;
+const GLOW_SIZE = BB_SIZE + 24;
+const ICON_SIZE = 56;
+const TAP_MAX_DISTANCE = 5;
+const PAN_MIN_DISTANCE = 5;
+const DRAG_COMMIT_RATIO = 0.4;
+const DRAG_SCALE = 1.4;
+const HINT_KEY = '@bb_swipe_hint_shown';
+
+const ROUTES: Record<Direction, string> = {
+  down: '/session-voice',
+  up: '/(app)/session-chat',
+  left: '/(app)/content-feed',
+  right: '/(app)/profile',
 };
 
-function formatCountUp(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-  return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
-}
+// Distinct per-destination tint so the peek-through behind the departing
+// screen tells the user where the drag is headed before they let go.
+const DEST_TINTS: Record<Direction, string> = {
+  down: '#5B9FFF',
+  up: '#34C759',
+  left: '#FF9F0A',
+  right: '#8B5CF6',
+};
 
 interface HubHomeScreenProps {
   onOpenDrawer: () => void;
 }
 
-export default function HubHomeScreen({ onOpenDrawer }: HubHomeScreenProps) {
-  const [swipeDirection, setSwipeDirection] = useState<SwipeDirection>(null);
-  const [now, setNow] = useState(Date.now());
-  const [lastOutcome, setLastOutcome] = useState<LastOutcome | null>(null);
-  const navigateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+export default function HubHomeScreen(_props: HubHomeScreenProps) {
+  const { width: SCREEN_W, height: SCREEN_H } = useWindowDimensions();
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showHint, setShowHint] = useState(false);
+
+  // Idle breathing on the BB circle itself.
+  const breathScale = useSharedValue(1);
+  // Brief outward pulse on tap.
+  const tapPulse = useSharedValue(1);
+  // Scale + glow while a drag is active.
+  const dragScale = useSharedValue(1);
+  const glowOpacity = useSharedValue(0);
+
+  // Whole-screen translate while dragging.
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const currentDir = useSharedValue<Direction | null>(null);
+
+  // Quick-log menu (tap) — shared fade for both options, plus a per-option
+  // "fly away" amount driven independently so only the tapped one exits.
+  const menuOpacity = useSharedValue(0);
+  const resistedFly = useSharedValue(0);
+  const gaveInFly = useSharedValue(0);
+
+  // First-launch hint.
+  const hintRingScale = useSharedValue(1);
+  const hintRingOpacity = useSharedValue(0);
+  const hintDragY = useSharedValue(0);
+  const hintDragOpacity = useSharedValue(0);
 
   useEffect(() => {
-    AsyncStorage.getItem(LAST_OUTCOME_KEY).then((raw) => {
-      if (raw) {
-        try {
-          setLastOutcome(JSON.parse(raw));
-        } catch {}
-      }
+    breathScale.value = withRepeat(
+      withTiming(1.08, { duration: 2200, easing: Easing.inOut(Easing.sin) }),
+      -1,
+      true,
+    );
+  }, [breathScale]);
+
+  useEffect(() => {
+    AsyncStorage.getItem(HINT_KEY).then((val) => {
+      if (val) return;
+      setShowHint(true);
+
+      hintRingOpacity.value = withSequence(withTiming(0.7, { duration: 120 }), withTiming(0, { duration: 900 }));
+      hintRingScale.value = withSequence(
+        withTiming(1, { duration: 0 }),
+        withTiming(2.4, { duration: 1000, easing: Easing.out(Easing.ease) }),
+      );
+
+      hintDragOpacity.value = withDelay(
+        1000,
+        withSequence(withTiming(0.85, { duration: 200 }), withTiming(0.85, { duration: 1000 }), withTiming(0, { duration: 300 })),
+      );
+      hintDragY.value = withDelay(
+        1000,
+        withRepeat(
+          withSequence(
+            withTiming(26, { duration: 380, easing: Easing.out(Easing.ease) }),
+            withTiming(0, { duration: 380, easing: Easing.in(Easing.ease) }),
+          ),
+          2,
+          false,
+        ),
+      );
+
+      const timer = setTimeout(() => {
+        setShowHint(false);
+        AsyncStorage.setItem(HINT_KEY, 'true').catch(() => {});
+      }, 2600);
+      return () => clearTimeout(timer);
     });
-  }, []);
+  }, [hintRingOpacity, hintRingScale, hintDragOpacity, hintDragY]);
 
-  useEffect(() => {
-    const interval = setInterval(() => setNow(Date.now()), 1_000);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (navigateTimer.current) clearTimeout(navigateTimer.current);
-    };
-  }, []);
-
-  const triggerDirection = useCallback((direction: Exclude<SwipeDirection, null>) => {
-    setSwipeDirection(direction);
-    if (navigateTimer.current) clearTimeout(navigateTimer.current);
-    navigateTimer.current = setTimeout(() => {
-      router.push(ROUTES[direction] as never);
-      setSwipeDirection(null);
-    }, NAVIGATE_DELAY_MS);
-  }, []);
-
-  const onHandlerStateChange = useCallback(
-    (event: PanGestureHandlerStateChangeEvent) => {
-      if (event.nativeEvent.state !== State.END) return;
-      const { translationX, translationY, velocityX, velocityY } = event.nativeEvent;
-      const absX = Math.abs(translationX);
-      const absY = Math.abs(translationY);
-      const absVX = Math.abs(velocityX);
-      const absVY = Math.abs(velocityY);
-
-      let direction: Exclude<SwipeDirection, null> | null = null;
-      if (absX > absY) {
-        if (absX > SWIPE_DISTANCE_THRESHOLD || absVX > SWIPE_VELOCITY_THRESHOLD) {
-          direction = translationX > 0 ? 'right' : 'left';
-        }
-      } else {
-        if (absY > SWIPE_DISTANCE_THRESHOLD || absVY > SWIPE_VELOCITY_THRESHOLD) {
-          direction = translationY > 0 ? 'down' : 'up';
-        }
-      }
-
-      if (direction) triggerDirection(direction);
-    },
-    [triggerDirection],
+  // Re-center everything whenever the hub regains focus (e.g. back from a
+  // portal destination) so a half-finished drag never lingers on return.
+  useFocusEffect(
+    useCallback(() => {
+      translateX.value = 0;
+      translateY.value = 0;
+      dragScale.value = 1;
+      glowOpacity.value = 0;
+      currentDir.value = null;
+      menuOpacity.value = 0;
+      resistedFly.value = 0;
+      gaveInFly.value = 0;
+      setMenuOpen(false);
+    }, [translateX, translateY, dragScale, glowOpacity, currentDir, menuOpacity, resistedFly, gaveInFly]),
   );
 
-  const elapsed = lastOutcome ? now - new Date(lastOutcome.timestamp).getTime() : null;
+  const navigateTo = useCallback((direction: Direction) => {
+    router.replace(ROUTES[direction] as never);
+  }, []);
+
+  const openMenu = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    resistedFly.value = 0;
+    gaveInFly.value = 0;
+    setMenuOpen(true);
+    menuOpacity.value = withTiming(1, { duration: 180 });
+  }, [menuOpacity, resistedFly, gaveInFly]);
+
+  const closeMenu = useCallback(() => {
+    menuOpacity.value = withTiming(0, { duration: 150 }, (finished) => {
+      if (finished) runOnJS(setMenuOpen)(false);
+    });
+  }, [menuOpacity]);
+
+  const handleOutcome = useCallback((outcome: 'resisted' | 'gave_in') => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const userId = useAuthStore.getState().user?.id || 'default';
+    recordSessionOutcome(userId, outcome);
+
+    const fly = outcome === 'resisted' ? resistedFly : gaveInFly;
+    fly.value = withTiming(1, { duration: 260 });
+    menuOpacity.value = withDelay(120, withTiming(0, { duration: 200 }, (finished) => {
+      if (finished) runOnJS(setMenuOpen)(false);
+    }));
+  }, [menuOpacity, resistedFly, gaveInFly]);
+
+  const tapGesture = Gesture.Tap()
+    .maxDistance(TAP_MAX_DISTANCE)
+    .onEnd((_e, success) => {
+      if (!success) return;
+      tapPulse.value = withSequence(withTiming(1.4, { duration: 75 }), withTiming(1, { duration: 75 }));
+      runOnJS(openMenu)();
+    });
+
+  const panGesture = Gesture.Pan()
+    .minDistance(PAN_MIN_DISTANCE)
+    .onStart(() => {
+      dragScale.value = withSpring(DRAG_SCALE, { damping: 14, stiffness: 180 });
+      glowOpacity.value = withTiming(1, { duration: 150 });
+    })
+    .onUpdate((e) => {
+      translateX.value = e.translationX;
+      translateY.value = e.translationY;
+      const absX = Math.abs(e.translationX);
+      const absY = Math.abs(e.translationY);
+      currentDir.value = absX > absY ? (e.translationX > 0 ? 'right' : 'left') : e.translationY > 0 ? 'down' : 'up';
+    })
+    .onEnd((e) => {
+      const dir = currentDir.value;
+      if (!dir) return;
+
+      const isXAxis = dir === 'left' || dir === 'right';
+      const dragRatio = isXAxis ? Math.abs(e.translationX) / SCREEN_W : Math.abs(e.translationY) / SCREEN_H;
+
+      if (dragRatio > DRAG_COMMIT_RATIO) {
+        const targetX = dir === 'left' ? -SCREEN_W : dir === 'right' ? SCREEN_W : 0;
+        const targetY = dir === 'up' ? -SCREEN_H : dir === 'down' ? SCREEN_H : 0;
+        translateX.value = withTiming(targetX, { duration: 320, easing: Easing.out(Easing.cubic) });
+        translateY.value = withTiming(targetY, { duration: 320, easing: Easing.out(Easing.cubic) }, (finished) => {
+          if (finished) runOnJS(navigateTo)(dir);
+        });
+      } else {
+        translateX.value = withSpring(0, { damping: 16, stiffness: 180 });
+        translateY.value = withSpring(0, { damping: 16, stiffness: 180 });
+        dragScale.value = withSpring(1, { damping: 14, stiffness: 180 });
+        glowOpacity.value = withTiming(0, { duration: 200 });
+        currentDir.value = null;
+      }
+    });
+
+  const combinedGesture = Gesture.Simultaneous(tapGesture, panGesture);
+
+  const screenStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }, { translateY: translateY.value }],
+  }));
+
+  const circleStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: breathScale.value * tapPulse.value * dragScale.value }],
+  }));
+
+  const glowStyle = useAnimatedStyle(() => ({
+    opacity: glowOpacity.value,
+  }));
+
+  const downPreviewStyle = useAnimatedStyle(() => ({ opacity: currentDir.value === 'down' ? 1 : 0 }));
+  const upPreviewStyle = useAnimatedStyle(() => ({ opacity: currentDir.value === 'up' ? 1 : 0 }));
+  const leftPreviewStyle = useAnimatedStyle(() => ({ opacity: currentDir.value === 'left' ? 1 : 0 }));
+  const rightPreviewStyle = useAnimatedStyle(() => ({ opacity: currentDir.value === 'right' ? 1 : 0 }));
+
+  const resistedStyle = useAnimatedStyle(() => ({
+    opacity: menuOpacity.value * (1 - resistedFly.value),
+    transform: [{ translateY: -resistedFly.value * 40 }],
+  }));
+  const gaveInStyle = useAnimatedStyle(() => ({
+    opacity: menuOpacity.value * (1 - gaveInFly.value),
+    transform: [{ translateY: -gaveInFly.value * 40 }],
+  }));
+
+  const hintRingStyle = useAnimatedStyle(() => ({
+    opacity: hintRingOpacity.value,
+    transform: [{ scale: hintRingScale.value }],
+  }));
+  const hintDragStyle = useAnimatedStyle(() => ({
+    opacity: hintDragOpacity.value,
+    transform: [{ translateY: BB_SIZE / 2 + 20 + hintDragY.value }],
+  }));
 
   return (
-    <GestureHandlerRootView style={styles.root}>
-      <View style={styles.container}>
-        <EntityBackground swipeDirection={swipeDirection} />
+    <View style={styles.container}>
+      <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.down }, downPreviewStyle]} pointerEvents="none" />
+      <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.up }, upPreviewStyle]} pointerEvents="none" />
+      <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.left }, leftPreviewStyle]} pointerEvents="none" />
+      <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.right }, rightPreviewStyle]} pointerEvents="none" />
 
-        <SafeAreaView style={styles.safeArea}>
-          <View style={styles.header}>
-            <Text style={styles.logo}>BB</Text>
-            <TouchableOpacity onPress={onOpenDrawer} hitSlop={12} style={styles.hamburger}>
-              <Ionicons name="menu" size={26} color={Colors.textPrimary} />
+      <Animated.View style={[styles.screen, screenStyle]}>
+        <EntityBackground />
+
+        {menuOpen && <Pressable style={StyleSheet.absoluteFill} onPress={closeMenu} />}
+
+        <View style={styles.hub} pointerEvents="box-none">
+          <Animated.View style={[styles.optionWrap, styles.optionLeft, resistedStyle]} pointerEvents={menuOpen ? 'auto' : 'none'}>
+            <TouchableOpacity style={styles.optionChip} activeOpacity={0.8} onPress={() => handleOutcome('resisted')}>
+              <Text style={styles.optionEmoji}>💪</Text>
             </TouchableOpacity>
-          </View>
+            <Text style={styles.optionLabel}>Resisted</Text>
+          </Animated.View>
 
-          <View style={styles.clockArea}>
-            <Text style={styles.clock}>{elapsed !== null ? formatCountUp(elapsed) : '—'}</Text>
-            <Text style={styles.clockLabel}>
-              {elapsed !== null ? 'since last urge' : 'no urges logged yet'}
-            </Text>
-          </View>
+          <Animated.View style={[styles.optionWrap, styles.optionRight, gaveInStyle]} pointerEvents={menuOpen ? 'auto' : 'none'}>
+            <TouchableOpacity style={styles.optionChip} activeOpacity={0.8} onPress={() => handleOutcome('gave_in')}>
+              <Text style={styles.optionEmoji}>😐</Text>
+            </TouchableOpacity>
+            <Text style={styles.optionLabel}>Gave In</Text>
+          </Animated.View>
 
-          <PanGestureHandler onHandlerStateChange={onHandlerStateChange}>
-            <View style={styles.stage}>
-              <TouchableOpacity
-                style={[styles.arrowGroup, styles.arrowUp]}
-                onPress={() => triggerDirection('up')}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="chevron-up" size={64} color={Colors.coral} />
-                <Text style={styles.arrowLabel}>TALK</Text>
-              </TouchableOpacity>
+          <Animated.View style={[styles.glowRing, glowStyle]} pointerEvents="none" />
 
-              <TouchableOpacity
-                style={[styles.arrowGroup, styles.arrowRight]}
-                onPress={() => triggerDirection('right')}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="chevron-forward" size={64} color={Colors.coral} />
-                <Text style={styles.arrowLabel}>SCROLL</Text>
-              </TouchableOpacity>
+          <GestureDetector gesture={combinedGesture}>
+            <Animated.View style={[styles.bbCircle, circleStyle]} />
+          </GestureDetector>
 
-              <TouchableOpacity
-                style={[styles.arrowGroup, styles.arrowDown]}
-                onPress={() => triggerDirection('down')}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="chevron-down" size={64} color={Colors.coral} />
-                <Text style={styles.arrowLabel}>CHAT</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.arrowGroup, styles.arrowLeft]}
-                onPress={() => triggerDirection('left')}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="chevron-back" size={64} color={Colors.coral} />
-                <Text style={styles.arrowLabel}>PROFILE</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.bbCircle}
-                onPress={() => triggerDirection('down')}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.bbText}>BB</Text>
-              </TouchableOpacity>
-            </View>
-          </PanGestureHandler>
-        </SafeAreaView>
-      </View>
-    </GestureHandlerRootView>
+          {showHint && (
+            <>
+              <Animated.View style={[styles.hintRing, hintRingStyle]} pointerEvents="none" />
+              <Animated.View style={[styles.hintDrag, hintDragStyle]} pointerEvents="none" />
+            </>
+          )}
+        </View>
+      </Animated.View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-  },
   container: {
     flex: 1,
     backgroundColor: Colors.background,
   },
-  safeArea: {
-    flex: 1,
+  preview: {
+    ...StyleSheet.absoluteFill,
   },
-  header: {
-    height: 60,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.md,
+  screen: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: Colors.background,
   },
-  logo: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: Colors.textPrimary,
-    letterSpacing: 1,
-  },
-  hamburger: {
-    width: 40,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  clockArea: {
-    alignItems: 'center',
-    paddingTop: Spacing.sm,
-    paddingBottom: Spacing.lg,
-  },
-  clock: {
-    fontSize: 48,
-    fontWeight: '700',
-    color: Colors.textPrimary,
-    fontVariant: ['tabular-nums'],
-    letterSpacing: 1,
-  },
-  clockLabel: {
-    fontSize: 13,
-    color: Colors.textTertiary,
-    fontWeight: '500',
-    marginTop: 4,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  stage: {
+  hub: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   bbCircle: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    borderWidth: 2,
-    borderColor: Colors.coral,
-    backgroundColor: 'rgba(232,98,74,0.12)',
+    width: BB_SIZE,
+    height: BB_SIZE,
+    borderRadius: BB_SIZE / 2,
+    backgroundColor: Colors.coral,
+  },
+  glowRing: {
+    position: 'absolute',
+    width: GLOW_SIZE,
+    height: GLOW_SIZE,
+    borderRadius: GLOW_SIZE / 2,
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.85)',
+  },
+  optionWrap: {
+    position: 'absolute',
+    alignItems: 'center',
+    gap: 8,
+  },
+  optionLeft: {
+    transform: [{ translateX: -86 }, { translateY: -100 }],
+  },
+  optionRight: {
+    transform: [{ translateX: 30 }, { translateY: -100 }],
+  },
+  optionChip: {
+    width: ICON_SIZE,
+    height: ICON_SIZE,
+    borderRadius: ICON_SIZE / 2,
+    backgroundColor: Colors.surface,
+    borderWidth: 1.5,
+    borderColor: Colors.surfaceBorder,
     alignItems: 'center',
     justifyContent: 'center',
-    transform: [{ rotate: '-10deg' }],
   },
-  bbText: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: Colors.coral,
-    letterSpacing: 1,
+  optionEmoji: {
+    fontSize: 28,
   },
-  arrowGroup: {
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    alignItems: 'center',
-    gap: 4,
-  },
-  arrowUp: {
-    transform: [{ translateX: -32 }, { translateY: -120 - 32 }],
-  },
-  arrowRight: {
-    transform: [{ translateX: 140 - 32 }, { translateY: -32 }],
-  },
-  arrowDown: {
-    transform: [{ translateX: -32 }, { translateY: 120 - 32 }],
-  },
-  arrowLeft: {
-    transform: [{ translateX: -140 - 32 }, { translateY: -32 }],
-  },
-  arrowLabel: {
-    fontSize: 20,
+  optionLabel: {
+    fontSize: 12,
     fontWeight: '700',
-    color: Colors.coral,
-    letterSpacing: 1,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    color: Colors.textSecondary,
+  },
+  hintRing: {
+    position: 'absolute',
+    width: BB_SIZE,
+    height: BB_SIZE,
+    borderRadius: BB_SIZE / 2,
+    borderWidth: 2,
+    borderColor: Colors.textPrimary,
+  },
+  hintDrag: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: Colors.textPrimary,
   },
 });
