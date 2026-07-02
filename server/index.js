@@ -14,6 +14,8 @@ import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import Anthropic from '@anthropic-ai/sdk';
+import { createClient } from '@supabase/supabase-js';
+import WebSocket from 'ws';
 import { AccessToken } from 'livekit-server-sdk';
 import { sendPush, isQuietHours, pickNudgeMessage } from './notifications.js';
 import { analyzeAndUpdate, buildProfileSummary, buildLifeArchitectureSummary, buildCurrentGoal, computeUsageStats, lookupProfileField, loadProfile, seedProfile, mergeProfiles, resolveUserId, saveRawTranscript } from './contextAgent.js';
@@ -37,6 +39,17 @@ try {
 } catch {}
 
 const client = new Anthropic();
+
+// Shared Supabase client for the bb_events store (service-role — bypasses RLS,
+// used only from this trusted server process). Node 20 has no native
+// WebSocket global, which supabase-js's realtime client requires even though
+// we only use REST (.from()) calls — pass the `ws` package explicitly so
+// client construction doesn't throw on startup.
+const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, {
+    realtime: { transport: WebSocket },
+  })
+  : null;
 
 // Path to the system prompt (read fresh on every call so agentDesignLoop
 // updates go live without a redeploy)
@@ -123,11 +136,202 @@ function buildSystemPrompt(profile, triggerContext, recentHistory, timezone, lif
     .replace('{{session_context}}', sessionContext || 'No prior session data.');
 }
 
+// ─── bb_events tool ─────────────────────────────────────────────────────────
+// Gives the agent a deterministic answer to "when was my last cigarette" /
+// "how many today" instead of guessing from conversational memory.
+
+const AGENT_TOOLS = [
+  {
+    name: 'get_usage_stats',
+    description: "Query the user's smoking and urge event history from the database. Use this for ANY question about cigarette counts, timestamps, last cigarette time, gaps between cigarettes, urges resisted, or milestones. Returns authoritative data — never guess or recall from memory when you can call this tool.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        date: {
+          type: 'string',
+          description: "Date to query in YYYY-MM-DD format, or 'today'. Omit to get most recent events across all dates.",
+        },
+        event_types: {
+          type: 'array',
+          items: { type: 'string' },
+          description: "Filter by event types: 'cigarette', 'urge_resisted', 'urge_gave_in', 'milestone'. Omit for all types.",
+        },
+        limit: {
+          type: 'integer',
+          description: 'Max events to return (default 20, max 100)',
+        },
+      },
+      required: [],
+    },
+  },
+];
+
+async function queryEvents(userId, { date, eventTypes, limit = 20 } = {}) {
+  if (!supabase) return [];
+
+  let query = supabase
+    .from('bb_events')
+    .select('id, event_type, occurred_at, metadata')
+    .eq('user_id', userId)
+    .order('occurred_at', { ascending: false })
+    .limit(Math.min(parseInt(limit, 10) || 20, 100));
+
+  if (date) {
+    const start = new Date(date); start.setHours(0, 0, 0, 0);
+    const end = new Date(date); end.setHours(23, 59, 59, 999);
+    query = query.gte('occurred_at', start.toISOString()).lte('occurred_at', end.toISOString());
+  }
+
+  if (eventTypes && eventTypes.length > 0) {
+    query = query.in('event_type', eventTypes);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+function summarizeEvents(events) {
+  const cigarettes = events.filter(e => e.event_type === 'cigarette');
+  const lastCigarette = cigarettes[0] || null;
+  const gapMinutes = lastCigarette
+    ? Math.round((Date.now() - new Date(lastCigarette.occurred_at).getTime()) / 60000)
+    : null;
+
+  return {
+    total_events: events.length,
+    cigarette_count: cigarettes.length,
+    last_cigarette_at: lastCigarette?.occurred_at || null,
+    minutes_since_last_cigarette: gapMinutes,
+    urges_resisted: events.filter(e => e.event_type === 'urge_resisted').length,
+    urges_gave_in: events.filter(e => e.event_type === 'urge_gave_in').length,
+  };
+}
+
+async function executeToolUse(toolUse, userId) {
+  if (toolUse.name !== 'get_usage_stats') {
+    return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ error: `Unknown tool: ${toolUse.name}` }), is_error: true };
+  }
+
+  try {
+    const { date, event_types, limit } = toolUse.input || {};
+    const queryDate = date === 'today' ? new Date().toISOString().split('T')[0] : date;
+    const events = await queryEvents(userId, { date: queryDate, eventTypes: event_types, limit });
+    return {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: JSON.stringify({ events, summary: summarizeEvents(events) }),
+    };
+  } catch (err) {
+    return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ error: err.message }), is_error: true };
+  }
+}
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, GET, PUT, OPTIONS',
   'Access-Control-Allow-Headers': 'content-type',
 };
+
+// Streams one agent turn to the client over SSE. When the model calls a tool
+// (e.g. get_usage_stats), the loop executes it, feeds the result back, and
+// keeps streaming — the client only ever sees text deltas and [DONE].
+const TOOL_USE_MAX_ROUNDS = 3;
+
+async function streamTextTurn(res, systemPrompt, conversationMessages, effectiveUserId) {
+  const FIRST_TOKEN_TIMEOUT_MS = 25000;
+  let headersSent = false;
+
+  // Runs one model turn, forwarding text deltas as they arrive. Returns the
+  // accumulated final message, or null if the request already ended (timeout).
+  const runStream = async (msgs) => {
+    const streamAbort = new AbortController();
+    const stream = client.messages.stream({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1024,
+      system: systemPrompt,
+      tools: AGENT_TOOLS,
+      messages: msgs,
+    }, { signal: streamAbort.signal });
+
+    // Watchdog: abort if the model goes silent for too long. Reset on
+    // every delta so a slow-but-steady stream isn't killed mid-response.
+    let timedOut = false;
+    const armWatchdog = () => setTimeout(() => {
+      timedOut = true;
+      streamAbort.abort();
+    }, FIRST_TOKEN_TIMEOUT_MS);
+    let watchdog = armWatchdog();
+
+    // Wait for the first event before committing to SSE —
+    // this lets pre-stream errors (billing, auth) return a proper HTTP status
+    try {
+      for await (const event of stream) {
+        clearTimeout(watchdog);
+        watchdog = armWatchdog();
+
+        if (!headersSent) {
+          res.writeHead(200, {
+            ...CORS,
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+          });
+          headersSent = true;
+        }
+        if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+          res.write(`data: ${JSON.stringify({ text: event.delta.text })}\n\n`);
+        }
+      }
+      clearTimeout(watchdog);
+    } catch (streamErr) {
+      clearTimeout(watchdog);
+      if (timedOut) {
+        if (!headersSent) {
+          res.writeHead(200, {
+            ...CORS,
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+          });
+        }
+        res.write('data: {"type":"error","error":"Response timed out — please try again"}\n\n');
+        res.write('data: [DONE]\n\n');
+        res.end();
+        return null;
+      }
+      throw streamErr;
+    }
+
+    return stream.finalMessage();
+  };
+
+  let currentMessages = conversationMessages;
+  let finalMessage = await runStream(currentMessages);
+  if (!finalMessage) return; // timed out — response already ended
+
+  let rounds = 0;
+  while (finalMessage.stop_reason === 'tool_use' && rounds < TOOL_USE_MAX_ROUNDS) {
+    rounds++;
+    const toolUseBlocks = finalMessage.content.filter(b => b.type === 'tool_use');
+    const toolResults = [];
+    for (const toolUse of toolUseBlocks) {
+      toolResults.push(await executeToolUse(toolUse, effectiveUserId));
+    }
+
+    currentMessages = [
+      ...currentMessages,
+      { role: 'assistant', content: finalMessage.content },
+      { role: 'user', content: toolResults },
+    ];
+
+    finalMessage = await runStream(currentMessages);
+    if (!finalMessage) return;
+  }
+
+  res.write('data: [DONE]\n\n');
+  res.end();
+}
 
 // Parse multipart form data (minimal, for audio upload)
 function parseMultipart(buffer, contentType) {
@@ -221,69 +425,10 @@ const server = createServer(async (req, res) => {
         analyzeAndUpdate(effectiveUserId, messages, false, timezone).catch(() => {});
       }
 
-      const streamAbort = new AbortController();
-      const stream = client.messages.stream({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 512,
-        system: systemPrompt,
-        messages: messages.map(m => ({
-          role: m.role,
-          content: m.content,
-        })),
-      }, { signal: streamAbort.signal });
-
-      // Watchdog: abort if the model goes silent for too long. Reset on
-      // every delta so a slow-but-steady stream isn't killed mid-response.
-      const FIRST_TOKEN_TIMEOUT_MS = 25000;
-      let timedOut = false;
-      const armWatchdog = () => setTimeout(() => {
-        timedOut = true;
-        streamAbort.abort();
-      }, FIRST_TOKEN_TIMEOUT_MS);
-      let watchdog = armWatchdog();
-
-      // Wait for the first event before committing to SSE —
-      // this lets pre-stream errors (billing, auth) return a proper HTTP status
-      let headersSent = false;
-      try {
-        for await (const event of stream) {
-          clearTimeout(watchdog);
-          watchdog = armWatchdog();
-
-          if (!headersSent) {
-            res.writeHead(200, {
-              ...CORS,
-              'Content-Type': 'text/event-stream',
-              'Cache-Control': 'no-cache',
-              Connection: 'keep-alive',
-            });
-            headersSent = true;
-          }
-          if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-            res.write(`data: ${JSON.stringify({ text: event.delta.text })}\n\n`);
-          }
-        }
-        clearTimeout(watchdog);
-      } catch (streamErr) {
-        clearTimeout(watchdog);
-        if (timedOut) {
-          if (!headersSent) {
-            res.writeHead(200, {
-              ...CORS,
-              'Content-Type': 'text/event-stream',
-              'Cache-Control': 'no-cache',
-              Connection: 'keep-alive',
-            });
-          }
-          res.write('data: {"type":"error","error":"Response timed out — please try again"}\n\n');
-          res.write('data: [DONE]\n\n');
-          return res.end();
-        }
-        throw streamErr;
-      }
-
-      res.write('data: [DONE]\n\n');
-      res.end();
+      await streamTextTurn(res, systemPrompt, messages.map(m => ({
+        role: m.role,
+        content: m.content,
+      })), effectiveUserId);
     } catch (err) {
       console.error('Error:', err.message);
       if (!res.headersSent) {
@@ -656,7 +801,7 @@ print(result["text"].strip())
           trigger_context: e.trigger_context ? JSON.parse(e.trigger_context) : null,
         }));
 
-        const upsertRes = await fetch(`${supabaseUrl}/rest/v1/urge_events`, {
+        const upsertRes = await fetch(`${supabaseUrl}/rest/v1/craving_events`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -962,6 +1107,67 @@ Return ONLY the JSON object, no markdown, no explanation.`;
       console.log(`[SessionOutcome] ${effectiveUserId}: ${outcome}`);
       res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: err.message }));
+    }
+  }
+
+  // ─── Event store (bb_events) ────────────────────────────────────────────────
+  if (req.method === 'POST' && req.url === '/events') {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    try {
+      const { userId, eventType, occurredAt, metadata } = JSON.parse(body);
+      if (!userId || !eventType) {
+        res.writeHead(400, { ...CORS, 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'userId and eventType required' }));
+      }
+      if (!supabase) {
+        res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Event store not configured' }));
+      }
+
+      const { data, error } = await supabase
+        .from('bb_events')
+        .insert({
+          user_id: userId,
+          event_type: eventType,
+          occurred_at: occurredAt || new Date().toISOString(),
+          metadata: metadata || {},
+        })
+        .select('id, occurred_at')
+        .single();
+
+      if (error) {
+        res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: error.message }));
+      }
+      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, id: data.id, occurred_at: data.occurred_at }));
+    } catch (err) {
+      res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: err.message }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/events')) {
+    const url = new URL(req.url, 'http://localhost');
+    const userId = url.searchParams.get('userId');
+    const date = url.searchParams.get('date');
+    const eventTypesParam = url.searchParams.get('eventTypes');
+    const limit = url.searchParams.get('limit') || '50';
+
+    if (!userId) {
+      res.writeHead(400, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'userId required' }));
+    }
+
+    try {
+      const eventTypes = eventTypesParam ? eventTypesParam.split(',') : undefined;
+      const events = await queryEvents(userId, { date, eventTypes, limit });
+      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ events, count: events.length }));
     } catch (err) {
       res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: err.message }));

@@ -4,6 +4,15 @@ A running log of significant product/architecture decisions and deviations from 
 
 ---
 
+## 2026-07-02 — Transactional event store (`bb_events`) + `get_usage_stats` tool
+
+**Decision.** Added a `bb_events` table (Supabase) as a deterministic log of discrete events — `cigarette`, `urge_resisted`, `urge_gave_in`, `milestone`, etc. — with `POST /events` / `GET /events` endpoints and a real Anthropic `get_usage_stats` tool wired into the `/session/turn` streaming call in `server/index.js`, so the agent queries the DB instead of guessing "when was my last cigarette" from conversational memory. `server/index.js` uses raw `node:http` (not Express) and Supabase writes elsewhere in that file go through hand-rolled `fetch` calls to the PostgREST endpoint rather than the `@supabase/supabase-js` client — the tool handler needed a real client for `.from().select()/.insert()` query building, so a module-level `supabase` client (service-role key) was added to `server/index.js` for this feature, following the same pattern already used in `server/vectorStore.js`.
+**Also fixed in passing.** `POST /sync/events` (offline sync of full craving-session records) was writing to a Supabase table named `urge_events`, which doesn't exist — the real table (per `supabase/migrations/001_initial_schema.sql` and the online path in `mobile/src/services/outcomeRecorder.ts`) is `craving_events`. Fixed the table name rather than rerouting through `bb_events`, since offline-synced records carry richer session data (intensity, mode, trigger_context) that `bb_events`'s simple schema doesn't model — this was a straightforward typo, not a schema mismatch.
+**Discovered, not fixed (out of scope).** While testing, found that `server/vectorStore.js`'s `createClient()` call throws on Node 20 (`server/Dockerfile` is `node:20-slim`) because `@supabase/supabase-js`'s realtime client requires a WebSocket global Node 20 doesn't provide by default — even though vectorStore only does REST calls, never realtime. The throw is silently swallowed by blanket `.catch(() => {})` at call sites, so the AI-memory vector store has likely been a silent no-op in production. Fixed for the new `bb_events` client here by installing `ws` and passing `{ realtime: { transport: WebSocket } }` to `createClient()`; the same fix should be applied to `vectorStore.js` but was left as a follow-up to keep this change scoped to the event store.
+**Why.** "When was my last cigarette" / "how many today" are exactly the kind of fact an LLM should never be trusted to recall from a conversation transcript — small errors compound into the agent contradicting itself across sessions, which erodes trust fast in a habit-coaching product.
+
+---
+
 ## 2026-06-15 — Reframe: habit-change, not addiction/crisis
 
 **Decision.** BattleBuddy is positioned as a **habit-change companion that trains impulse resistance**, not an addiction-recovery or crisis tool. The slime-mold → commander thesis, the circuit-breaker loop, and the personalization moat all stay; the clinical/crisis framing goes.

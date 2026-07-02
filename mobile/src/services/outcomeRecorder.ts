@@ -1,5 +1,6 @@
 import { ApiConfig } from '../config';
 import type { SessionMessage, SessionOutcome } from '../stores/sessionStore';
+import { logEvent } from './eventService';
 
 export interface SessionResult {
   userId: string | null;
@@ -151,13 +152,15 @@ async function generateSessionReport(result: SessionResult, cravingEventId: stri
 async function saveReportLocally(report: any): Promise<void> {
   const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
   const { useSessionStore } = await import('../stores/sessionStore');
+  const { scopedKey } = await import('./scopedStorage');
 
   // Append to local reports list (keep last 20)
-  const existing = await AsyncStorage.getItem('bb_session_reports');
+  const key = scopedKey('bb_session_reports');
+  const existing = await AsyncStorage.getItem(key);
   const reports: any[] = existing ? JSON.parse(existing) : [];
   reports.unshift({ ...report, created_at: new Date().toISOString() });
   if (reports.length > 20) reports.length = 20;
-  await AsyncStorage.setItem('bb_session_reports', JSON.stringify(reports));
+  await AsyncStorage.setItem(key, JSON.stringify(reports));
 
   // Build an updated profile from all local reports
   const profile = buildLocalProfile(reports);
@@ -249,8 +252,9 @@ export async function recordSessionOutcome(
   const timestamp = new Date().toISOString();
 
   const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+  const { scopedKey } = await import('./scopedStorage');
   await AsyncStorage.setItem(
-    LAST_OUTCOME_KEY,
+    scopedKey(LAST_OUTCOME_KEY),
     JSON.stringify({ outcome, timestamp } satisfies LastOutcome),
   ).catch(() => {});
 
@@ -262,6 +266,13 @@ export async function recordSessionOutcome(
     });
   } catch {
     // Offline — local storage already has it
+  }
+
+  if (outcome === 'resisted') {
+    logEvent(userId, 'urge_resisted', {}, timestamp);
+  } else {
+    logEvent(userId, 'urge_gave_in', {}, timestamp);
+    logEvent(userId, 'cigarette', {}, timestamp);
   }
 }
 
