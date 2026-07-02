@@ -27,6 +27,7 @@ const GLOW_SIZE = BB_SIZE + 24;
 const ICON_SIZE = 56;
 const TAP_MAX_DISTANCE = 5;
 const PAN_MIN_DISTANCE = 5;
+const AXIS_LOCK_THRESHOLD = 8;
 const DRAG_COMMIT_RATIO = 0.4;
 const DRAG_SCALE = 1.4;
 const HINT_KEY = '@bb_swipe_hint_shown';
@@ -69,6 +70,9 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
   const currentDir = useSharedValue<Direction | null>(null);
+  // Axis locked in from the first few pixels of movement — 'x' or 'y' for
+  // the rest of the gesture, so drags never track diagonally.
+  const lockedAxis = useSharedValue<'x' | 'y' | null>(null);
 
   // Quick-log menu (tap) — shared fade for both options, plus a per-option
   // "fly away" amount driven independently so only the tapped one exits.
@@ -134,11 +138,12 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
       dragScale.value = 1;
       glowOpacity.value = 0;
       currentDir.value = null;
+      lockedAxis.value = null;
       menuOpacity.value = 0;
       resistedFly.value = 0;
       gaveInFly.value = 0;
       setMenuOpen(false);
-    }, [translateX, translateY, dragScale, glowOpacity, currentDir, menuOpacity, resistedFly, gaveInFly]),
+    }, [translateX, translateY, dragScale, glowOpacity, currentDir, lockedAxis, menuOpacity, resistedFly, gaveInFly]),
   );
 
   const navigateTo = useCallback((direction: Direction) => {
@@ -182,21 +187,40 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
   const panGesture = Gesture.Pan()
     .minDistance(PAN_MIN_DISTANCE)
     .onStart(() => {
+      lockedAxis.value = null;
       dragScale.value = withSpring(DRAG_SCALE, { damping: 14, stiffness: 180 });
       glowOpacity.value = withTiming(1, { duration: 150 });
     })
     .onUpdate((e) => {
-      translateX.value = e.translationX;
-      translateY.value = e.translationY;
-      const absX = Math.abs(e.translationX);
-      const absY = Math.abs(e.translationY);
-      currentDir.value = absX > absY ? (e.translationX > 0 ? 'right' : 'left') : e.translationY > 0 ? 'down' : 'up';
+      // Determine the axis from the first few pixels of movement, then hold
+      // it for the rest of the gesture — the other axis stays zeroed so the
+      // screen only ever tracks purely horizontal or purely vertical.
+      if (lockedAxis.value === null) {
+        const absX = Math.abs(e.translationX);
+        const absY = Math.abs(e.translationY);
+        if (absX >= AXIS_LOCK_THRESHOLD || absY >= AXIS_LOCK_THRESHOLD) {
+          lockedAxis.value = absX > absY ? 'x' : 'y';
+        }
+      }
+
+      if (lockedAxis.value === 'x') {
+        translateX.value = e.translationX;
+        translateY.value = 0;
+        currentDir.value = e.translationX > 0 ? 'right' : 'left';
+      } else if (lockedAxis.value === 'y') {
+        translateX.value = 0;
+        translateY.value = e.translationY;
+        currentDir.value = e.translationY > 0 ? 'down' : 'up';
+      }
     })
     .onEnd((e) => {
       const dir = currentDir.value;
-      if (!dir) return;
+      if (!dir) {
+        lockedAxis.value = null;
+        return;
+      }
 
-      const isXAxis = dir === 'left' || dir === 'right';
+      const isXAxis = lockedAxis.value === 'x';
       const dragRatio = isXAxis ? Math.abs(e.translationX) / SCREEN_W : Math.abs(e.translationY) / SCREEN_H;
 
       if (dragRatio > DRAG_COMMIT_RATIO) {
@@ -213,6 +237,7 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
         glowOpacity.value = withTiming(0, { duration: 200 });
         currentDir.value = null;
       }
+      lockedAxis.value = null;
     });
 
   const screenStyle = useAnimatedStyle(() => ({
