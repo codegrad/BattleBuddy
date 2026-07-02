@@ -2,6 +2,7 @@ import { useCallback, useEffect } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import ChatBottomSheet from '../../src/components/chat/ChatBottomSheet';
+import HomeButton from '../../src/components/common/HomeButton';
 import { useSessionStore } from '../../src/stores/sessionStore';
 import { useEngagementEngine } from '../../src/services/engagementEngine';
 import { Colors } from '../../src/theme';
@@ -30,6 +31,7 @@ export default function SessionChatScreen() {
   return (
     <View style={styles.container}>
       <ChatBottomSheet open onClose={handleClose} onSwitchToVoice={handleSwitchToVoice} />
+      <HomeButton topOffset={6} />
     </View>
   );
 }

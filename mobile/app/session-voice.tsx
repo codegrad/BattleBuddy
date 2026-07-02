@@ -4,6 +4,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as Haptics from 'expo-haptics';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
 import {
   LiveKitRoom,
   useParticipants,
@@ -13,15 +21,38 @@ import {
 } from '@livekit/react-native';
 import { RoomEvent, type TranscriptionSegment, type Participant } from 'livekit-client';
 import { ApiConfig } from '../src/config';
-import { BBMascot } from '../src/components/mascot';
-import AudioVisualizer from '../src/components/voice/AudioVisualizer';
+import EntityBackground from '../src/components/home/EntityBackground';
+import type { MascotState } from '../src/components/mascot';
 import EndCallOverlay from '../src/components/voice/EndCallOverlay';
 import OutcomeCapture from '../src/components/feed/OutcomeCapture';
+import HomeButton from '../src/components/common/HomeButton';
 import { useSessionStore } from '../src/stores/sessionStore';
 import { useAuthStore } from '../src/stores/authStore';
-import { getStateColor } from '../src/hooks/useAudioLevel';
 import { recordSessionOutcome } from '../src/services/outcomeRecorder';
 import { Colors, Spacing } from '../src/theme';
+
+// Same state -> color convention as the hub entity and the old mascot:
+// blue = idle/listening, green = hearing the user, coral = Buddy talking/thinking.
+const STATE_COLOR: Record<MascotState, string> = {
+  idle: Colors.stateIdle,
+  listening: Colors.stateIdle,
+  user_speaking: Colors.stateUserSpeaking,
+  speaking: Colors.coral,
+  thinking: Colors.coral,
+  celebrating: Colors.stateUserSpeaking,
+  empathy: Colors.stateIdle,
+};
+// Baseline "how alive it looks" per state, before real mic/speaker level is
+// layered on top — idle states stay calm, active speech pulses harder.
+const STATE_BASE_ENERGY: Record<MascotState, number> = {
+  idle: 0.15,
+  listening: 0.18,
+  user_speaking: 0.5,
+  speaking: 0.6,
+  thinking: 0.3,
+  celebrating: 0.5,
+  empathy: 0.2,
+};
 
 try {
   registerGlobals();
@@ -58,7 +89,25 @@ export default function SessionVoiceScreen() {
   const endSession = useSessionStore((s) => s.endSession);
   const setMascotState = useSessionStore((s) => s.setMascotState);
 
-  const stateColor = getStateColor(mascotState);
+  const entityColor = STATE_COLOR[mascotState];
+  const entityEnergy = Math.min(1, STATE_BASE_ENERGY[mascotState] + audioLevel * 0.6);
+
+  const ringScale = useSharedValue(1);
+  const ringOpacity = useSharedValue(0.55);
+  useEffect(() => {
+    ringScale.value = withRepeat(
+      withSequence(withTiming(1, { duration: 0 }), withTiming(1.7, { duration: 2600, easing: Easing.out(Easing.ease) })),
+      -1,
+    );
+    ringOpacity.value = withRepeat(
+      withSequence(withTiming(0.55, { duration: 0 }), withTiming(0, { duration: 2600, easing: Easing.out(Easing.ease) })),
+      -1,
+    );
+  }, [ringScale, ringOpacity]);
+  const ringStyle = useAnimatedStyle(() => ({
+    opacity: ringOpacity.value,
+    transform: [{ scale: ringScale.value }],
+  }));
 
   // Start session if needed
   useEffect(() => {
@@ -151,7 +200,7 @@ export default function SessionVoiceScreen() {
   const handleSwitchToText = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     switchMode('text');
-    router.replace('/(app)/');
+    router.replace('/(app)/session-chat');
   }, [switchMode]);
 
   const handleOutcomeComplete = useCallback(
@@ -171,6 +220,7 @@ export default function SessionVoiceScreen() {
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
+      <HomeButton />
       <SafeAreaView style={styles.safeArea}>
         {/* Header */}
         <View style={styles.header}>
@@ -182,7 +232,7 @@ export default function SessionVoiceScreen() {
             <Text style={styles.timer}>{formatTime(elapsed)}</Text>
           </View>
           <Text style={styles.headerTitle}>Buddy</Text>
-          <Text style={styles.statusLabel}>
+          <Text style={[styles.statusLabel, { color: entityColor }]}>
             {mascotState === 'speaking' ? 'Buddy is talking...' :
              mascotState === 'thinking' ? 'Thinking...' :
              mascotState === 'user_speaking' ? 'Hearing you...' :
@@ -190,10 +240,13 @@ export default function SessionVoiceScreen() {
           </Text>
         </View>
 
-        {/* Mascot + Audio Visualizer */}
+        {/* Entity — same living presence as the hub, color/energy driven by call state */}
         <View style={styles.mascotArea}>
-          <AudioVisualizer audioLevel={audioLevel} stateColor={stateColor} size={300} />
-          <BBMascot state={mascotState} size={240} audioLevel={audioLevel} />
+          <EntityBackground targetColor={entityColor} energy={entityEnergy} />
+          <Animated.View style={[styles.bbRing, ringStyle, { borderColor: entityColor }]} pointerEvents="none" />
+          <View style={[styles.bbCircle, { borderColor: entityColor }]}>
+            <Text style={styles.bbText}>BB</Text>
+          </View>
         </View>
 
         {/* Controls */}
@@ -409,6 +462,29 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  bbRing: {
+    position: 'absolute',
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    borderWidth: 2,
+  },
+  bbCircle: {
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    borderWidth: 3,
+    backgroundColor: 'rgba(28,28,30,0.75)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bbText: {
+    fontSize: 46,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+    letterSpacing: 1,
+    transform: [{ rotate: '-7deg' }],
   },
   controls: {
     flexDirection: 'row',

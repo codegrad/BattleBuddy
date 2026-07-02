@@ -215,8 +215,6 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
       }
     });
 
-  const combinedGesture = Gesture.Simultaneous(tapGesture, panGesture);
-
   const screenStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }, { translateY: translateY.value }],
   }));
@@ -253,47 +251,61 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
   }));
 
   return (
-    <View style={styles.container}>
-      <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.down }, downPreviewStyle]} pointerEvents="none" />
-      <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.up }, upPreviewStyle]} pointerEvents="none" />
-      <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.left }, leftPreviewStyle]} pointerEvents="none" />
-      <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.right }, rightPreviewStyle]} pointerEvents="none" />
+    <GestureDetector gesture={panGesture}>
+      <View style={styles.container}>
+        <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.down }, downPreviewStyle]} pointerEvents="none">
+          <Text style={[styles.destLabelHorizontal, styles.destLabelTop]}>VOICE</Text>
+        </Animated.View>
+        <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.up }, upPreviewStyle]} pointerEvents="none">
+          <Text style={[styles.destLabelHorizontal, styles.destLabelBottom]}>CHAT</Text>
+        </Animated.View>
+        <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.left }, leftPreviewStyle]} pointerEvents="none">
+          <View style={[styles.destLabelVerticalWrap, styles.destLabelVerticalWrapRight]}>
+            <Text style={[styles.destLabelVertical, styles.destLabelRotateRight]}>CONTENT</Text>
+          </View>
+        </Animated.View>
+        <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.right }, rightPreviewStyle]} pointerEvents="none">
+          <View style={[styles.destLabelVerticalWrap, styles.destLabelVerticalWrapLeft]}>
+            <Text style={[styles.destLabelVertical, styles.destLabelRotateLeft]}>PROFILE</Text>
+          </View>
+        </Animated.View>
 
-      <Animated.View style={[styles.screen, screenStyle]}>
-        <EntityBackground />
+        <Animated.View style={[styles.screen, screenStyle]}>
+          <EntityBackground />
 
-        {menuOpen && <Pressable style={StyleSheet.absoluteFill} onPress={closeMenu} />}
+          {menuOpen && <Pressable style={StyleSheet.absoluteFill} onPress={closeMenu} />}
 
-        <View style={styles.hub} pointerEvents="box-none">
-          <Animated.View style={[styles.optionWrap, styles.optionLeft, resistedStyle]} pointerEvents={menuOpen ? 'auto' : 'none'}>
-            <TouchableOpacity style={styles.optionChip} activeOpacity={0.8} onPress={() => handleOutcome('resisted')}>
-              <Text style={styles.optionEmoji}>💪</Text>
-            </TouchableOpacity>
-            <Text style={styles.optionLabel}>Resisted</Text>
-          </Animated.View>
+          <View style={styles.hub} pointerEvents="box-none">
+            <Animated.View style={[styles.optionWrap, styles.optionLeft, resistedStyle]} pointerEvents={menuOpen ? 'auto' : 'none'}>
+              <TouchableOpacity style={styles.optionChip} activeOpacity={0.8} onPress={() => handleOutcome('resisted')}>
+                <Text style={styles.optionEmoji}>💪</Text>
+              </TouchableOpacity>
+              <Text style={styles.optionLabel}>Resisted</Text>
+            </Animated.View>
 
-          <Animated.View style={[styles.optionWrap, styles.optionRight, gaveInStyle]} pointerEvents={menuOpen ? 'auto' : 'none'}>
-            <TouchableOpacity style={styles.optionChip} activeOpacity={0.8} onPress={() => handleOutcome('gave_in')}>
-              <Text style={styles.optionEmoji}>😐</Text>
-            </TouchableOpacity>
-            <Text style={styles.optionLabel}>Gave In</Text>
-          </Animated.View>
+            <Animated.View style={[styles.optionWrap, styles.optionRight, gaveInStyle]} pointerEvents={menuOpen ? 'auto' : 'none'}>
+              <TouchableOpacity style={styles.optionChip} activeOpacity={0.8} onPress={() => handleOutcome('gave_in')}>
+                <Text style={styles.optionEmoji}>😐</Text>
+              </TouchableOpacity>
+              <Text style={styles.optionLabel}>Gave In</Text>
+            </Animated.View>
 
-          <Animated.View style={[styles.glowRing, glowStyle]} pointerEvents="none" />
+            <Animated.View style={[styles.glowRing, glowStyle]} pointerEvents="none" />
 
-          <GestureDetector gesture={combinedGesture}>
-            <Animated.View style={[styles.bbCircle, circleStyle]} />
-          </GestureDetector>
+            <GestureDetector gesture={tapGesture}>
+              <Animated.View style={[styles.bbCircle, circleStyle]} />
+            </GestureDetector>
 
-          {showHint && (
-            <>
-              <Animated.View style={[styles.hintRing, hintRingStyle]} pointerEvents="none" />
-              <Animated.View style={[styles.hintDrag, hintDragStyle]} pointerEvents="none" />
-            </>
-          )}
-        </View>
-      </Animated.View>
-    </View>
+            {showHint && (
+              <>
+                <Animated.View style={[styles.hintRing, hintRingStyle]} pointerEvents="none" />
+                <Animated.View style={[styles.hintDrag, hintDragStyle]} pointerEvents="none" />
+              </>
+            )}
+          </View>
+        </Animated.View>
+      </View>
+    </GestureDetector>
   );
 }
 
@@ -304,6 +316,48 @@ const styles = StyleSheet.create({
   },
   preview: {
     ...StyleSheet.absoluteFill,
+  },
+  destLabelHorizontal: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    fontSize: 92,
+    fontWeight: '800',
+    color: 'rgba(255,255,255,0.92)',
+    textAlign: 'center',
+    letterSpacing: 4,
+  },
+  destLabelTop: {
+    top: '14%',
+  },
+  destLabelBottom: {
+    bottom: '14%',
+  },
+  destLabelVerticalWrap: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 160,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  destLabelVerticalWrapLeft: {
+    left: 0,
+  },
+  destLabelVerticalWrapRight: {
+    right: 0,
+  },
+  destLabelVertical: {
+    fontSize: 84,
+    fontWeight: '800',
+    color: 'rgba(255,255,255,0.92)',
+    letterSpacing: 4,
+  },
+  destLabelRotateLeft: {
+    transform: [{ rotate: '-90deg' }],
+  },
+  destLabelRotateRight: {
+    transform: [{ rotate: '90deg' }],
   },
   screen: {
     ...StyleSheet.absoluteFill,
