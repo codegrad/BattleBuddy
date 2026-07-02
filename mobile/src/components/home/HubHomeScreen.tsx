@@ -28,7 +28,8 @@ const ICON_SIZE = 56;
 const TAP_MAX_DISTANCE = 5;
 const PAN_MIN_DISTANCE = 5;
 const AXIS_LOCK_THRESHOLD = 8;
-const DRAG_COMMIT_RATIO = 0.4;
+const DRAG_COMMIT_RATIO = 0.25;
+const VELOCITY_COMMIT_THRESHOLD = 500;
 const DRAG_SCALE = 1.4;
 const HINT_KEY = '@bb_swipe_hint_shown';
 
@@ -222,8 +223,9 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
 
       const isXAxis = lockedAxis.value === 'x';
       const dragRatio = isXAxis ? Math.abs(e.translationX) / SCREEN_W : Math.abs(e.translationY) / SCREEN_H;
+      const velocity = isXAxis ? Math.abs(e.velocityX) : Math.abs(e.velocityY);
 
-      if (dragRatio > DRAG_COMMIT_RATIO) {
+      if (dragRatio > DRAG_COMMIT_RATIO || velocity > VELOCITY_COMMIT_THRESHOLD) {
         const targetX = dir === 'left' ? -SCREEN_W : dir === 'right' ? SCREEN_W : 0;
         const targetY = dir === 'up' ? -SCREEN_H : dir === 'down' ? SCREEN_H : 0;
         translateX.value = withTiming(targetX, { duration: 320, easing: Easing.out(Easing.cubic) });
