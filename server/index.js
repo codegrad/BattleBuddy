@@ -1178,6 +1178,40 @@ Return ONLY the JSON object, no markdown, no explanation.`;
 
   // ─── Context Agent API ──────────────────────────────────────────────────────
 
+  // List / read raw session transcripts (admin + design-loop tool).
+  // GET /context/transcripts/{userId}            → index of sessions
+  // GET /context/transcripts/{userId}/{sessionId} → full transcript
+  if (req.method === 'GET' && req.url.startsWith('/context/transcripts/')) {
+    try {
+      const parts = req.url.split('/context/transcripts/')[1].split('/').map(decodeURIComponent);
+      const userId = resolveUserId(parts[0] || 'default');
+      const storeDir = process.env.CONTEXT_STORE_DIR || resolve(__dirname, 'context-store');
+      const dir = resolve(storeDir, 'session-transcripts', userId);
+
+      if (parts.length > 1 && parts[1]) {
+        const safe = parts[1].replace(/[^a-zA-Z0-9._-]/g, '_');
+        const data = JSON.parse(readFileSync(resolve(dir, `${safe}.json`), 'utf-8'));
+        res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(data));
+      }
+
+      let sessions = [];
+      try {
+        sessions = readdirSync(dir).filter(f => f.endsWith('.json')).map(f => {
+          try {
+            const d = JSON.parse(readFileSync(resolve(dir, f), 'utf-8'));
+            return { sessionId: d.sessionId || f.replace('.json', ''), updatedAt: d.updatedAt || null, messageCount: d.messageCount || (d.messages || []).length };
+          } catch { return { sessionId: f.replace('.json', ''), updatedAt: null, messageCount: null }; }
+        }).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+      } catch {}
+      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ userId, sessions }));
+    } catch (err) {
+      res.writeHead(404, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: err.message }));
+    }
+  }
+
   // Get the context agent's profile for a user
   if (req.method === 'GET' && req.url.startsWith('/context/profile/')) {
     const userId = req.url.split('/context/profile/')[1];
