@@ -27,10 +27,13 @@ create policy "bb_events: own rows only"
   with check (auth.uid()::text = user_id);
 
 -- ── 2. push_tokens identity alignment ────────────────────────────────────────
+-- Order matters: the RLS policy references user_id, so Postgres refuses to
+-- alter the column type while the policy exists. Drop policy first, alter,
+-- then recreate.
+drop policy if exists "push_tokens: own rows only" on public.push_tokens;
 alter table public.push_tokens drop constraint if exists push_tokens_user_id_fkey;
 alter table public.push_tokens alter column user_id type text using user_id::text;
 
-drop policy if exists "push_tokens: own rows only" on public.push_tokens;
 create policy "push_tokens: own rows only"
   on public.push_tokens for all
   using (auth.uid()::text = user_id)
