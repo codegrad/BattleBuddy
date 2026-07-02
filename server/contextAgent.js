@@ -754,7 +754,14 @@ export function buildLifeArchitectureSummary(rawUserId) {
   }
 
   if (parts.length === 0) return 'Not yet discovered — learn through conversation.';
-  return parts.join('\n');
+
+  // Same per-turn size budget rationale as buildProfileSummary.
+  const MAX_LIFE_ARCH_CHARS = 6000;
+  let out = parts.join('\n');
+  if (out.length > MAX_LIFE_ARCH_CHARS) {
+    out = out.slice(0, MAX_LIFE_ARCH_CHARS) + ' …[trimmed for length]';
+  }
+  return out;
 }
 
 /**
