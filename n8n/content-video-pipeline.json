@@ -604,7 +604,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ r2_url: \"\", r2_key: `failed/${$json.operationName.split('/').pop()}-${$json.status || 'timeout'}-attempt${$json.pollAttempts}-${Date.now()}`, theme: $json.theme, tags: [], prompt: $json.prompt, duration_seconds: null, video_api: $('Set Config').first().json.VIDEO_API, generation_id: $json.operationName, status: \"failed\" }) }}",
+        "jsonBody": "={{ JSON.stringify({ r2_url: \"\", r2_key: `failed/${$json.operationName.split('/').pop()}-${$json.status || 'timeout'}-attempt${$json.pollAttempts}-${Date.now()}`, theme: $json.theme, tags: [$json.failureReason || \"no failure reason captured\"], prompt: $json.prompt, duration_seconds: null, video_api: $('Set Config').first().json.VIDEO_API, generation_id: $json.operationName, status: \"failed\" }) }}",
         "options": {},
         "authentication": "genericCredentialType",
         "genericAuthType": "httpCustomAuth"
