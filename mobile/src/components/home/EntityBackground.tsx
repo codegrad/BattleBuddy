@@ -1,24 +1,28 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo } from 'react';
 import { StyleSheet, useWindowDimensions } from 'react-native';
 import Animated, {
-  Easing,
   interpolateColor,
   useAnimatedProps,
-  useAnimatedStyle,
   useDerivedValue,
   useFrameCallback,
   useSharedValue,
-  withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
 import Svg, { Circle, Path } from 'react-native-svg';
 
 const NUM_PARTICLES = 60;
-const CONNECT_DISTANCE = 80;
+const CONNECT_DISTANCE = 84;
 const MAX_LINES = 220;
 const COLOR_PERIOD_S = 30;
-const BREATH_PERIOD_S = 4;
-const PULL_DURATION_MS = 600;
+const BREATH_PERIOD_S = 7;
+
+// How far the whole entity leans/compacts toward a CTA while it's only being
+// previewed (drag in progress, not yet released past the swipe threshold).
+const HOVER_CAP = 0.6;
+const HOVER_EASE_RATE = 5.5; // per second
+const COMMIT_EASE_RATE = 18; // per second — snaps fast so the exit reads as decisive
+const STATE_COLOR_EASE_RATE = 0.06; // per frame — how fast the entity eases toward targetColor
+const STATE_ENERGY_EASE_RATE = 0.08; // per frame
 
 export type SwipeDirection = 'up' | 'right' | 'down' | 'left' | null;
 
@@ -29,9 +33,20 @@ const DIRECTION_VECTORS: Record<Exclude<SwipeDirection, null>, { x: number; y: n
   left: { x: -1, y: 0 },
 };
 
+export interface EntityBackgroundHandle {
+  /** Live preview while a direction is being pressed/dragged but not yet committed. amt is 0..1 of HOVER_CAP. */
+  lean: (direction: Exclude<SwipeDirection, null>, amt: number) => void;
+  /** Clears an in-progress lean preview (drag cancelled, CTA released without commit). */
+  release: () => void;
+  /** Full commit: entity compacts, glows, and rushes off toward `direction`. */
+  commit: (direction: Exclude<SwipeDirection, null>) => void;
+  /** Snaps back to idle instantly — call when the hub screen regains focus. */
+  reset: () => void;
+}
+
 interface ParticleConfig {
-  baseX: number;
-  baseY: number;
+  homeAngle: number;
+  homeRadius: number;
   ampX: number;
   ampY: number;
   freqX: number;
@@ -39,7 +54,7 @@ interface ParticleConfig {
   seedX: number;
   seedY: number;
   radius: number;
-  opacity: number;
+  baseOpacity: number;
 }
 
 // Deterministic hash -> [0,1), used as the pseudo-random gradient source for value noise.
@@ -61,20 +76,30 @@ function valueNoise1D(x: number): number {
   return a + (b - a) * u;
 }
 
-function makeParticleConfigs(width: number, height: number): ParticleConfig[] {
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const clean = hex.replace('#', '');
+  const r = parseInt(clean.substring(0, 2), 16);
+  const g = parseInt(clean.substring(2, 4), 16);
+  const b = parseInt(clean.substring(4, 6), 16);
+  return { r, g, b };
+}
+
+// Particles rest on a contained ring around the hub center — a central presence,
+// not a full-screen scatter — so it reads as one entity behind the BB button.
+function makeParticleConfigs(containRadius: number): ParticleConfig[] {
   const configs: ParticleConfig[] = [];
   for (let i = 0; i < NUM_PARTICLES; i++) {
     configs.push({
-      baseX: Math.random() * width,
-      baseY: Math.random() * height,
-      ampX: 16 + Math.random() * 40,
-      ampY: 16 + Math.random() * 40,
+      homeAngle: Math.random() * Math.PI * 2,
+      homeRadius: 24 + Math.random() * containRadius,
+      ampX: 10 + Math.random() * 26,
+      ampY: 10 + Math.random() * 26,
       freqX: 0.04 + Math.random() * 0.09,
       freqY: 0.04 + Math.random() * 0.09,
       seedX: Math.random() * 1000,
       seedY: Math.random() * 1000,
-      radius: 1.5 + Math.random() * 3,
-      opacity: 0.35 + Math.random() * 0.5,
+      radius: 1.6 + Math.random() * 3.2,
+      baseOpacity: 0.4 + Math.random() * 0.45,
     });
   }
   return configs;
@@ -88,57 +113,146 @@ interface ParticleProps {
   config: ParticleConfig;
   positions: SharedValue<{ x: number; y: number }[]>;
   fillColor: SharedValue<string>;
+  glow: SharedValue<number>;
 }
 
-const Particle = React.memo(function Particle({ index, config, positions, fillColor }: ParticleProps) {
+const Particle = React.memo(function Particle({ index, config, positions, fillColor, glow }: ParticleProps) {
   const animatedProps = useAnimatedProps(() => {
-    const p = positions.value[index] ?? { x: config.baseX, y: config.baseY };
+    const p = positions.value[index] ?? { x: 0, y: 0 };
+    const g = glow.value;
     return {
       cx: p.x,
       cy: p.y,
       fill: fillColor.value,
+      r: config.radius * g,
+      opacity: Math.min(1, config.baseOpacity * g),
     };
   });
 
-  return <AnimatedCircle r={config.radius} opacity={config.opacity} animatedProps={animatedProps} />;
+  return <AnimatedCircle animatedProps={animatedProps} />;
 });
 
 interface EntityBackgroundProps {
-  swipeDirection?: SwipeDirection;
+  center?: { x: number; y: number };
+  /**
+   * When provided, overrides the hub's ambient auto-cycling color with this
+   * hex target, eased smoothly frame to frame — used for deterministic
+   * state-driven color (e.g. the voice call's listening/speaking/thinking
+   * states) instead of the free-roaming mood cycle.
+   */
+  targetColor?: string;
+  /**
+   * 0..1 — scales breathing amplitude and particle glow on top of whatever
+   * the focus/lean system is doing. Meant for real audio-reactivity (voice
+   * call mic/speaker level) layered on a per-state baseline; omit for the
+   * hub's default calm ambient breathing.
+   */
+  energy?: number;
 }
 
-export default function EntityBackground({ swipeDirection = null }: EntityBackgroundProps) {
+const EntityBackground = forwardRef<EntityBackgroundHandle, EntityBackgroundProps>(function EntityBackground(
+  { center, targetColor, energy }: EntityBackgroundProps,
+  ref,
+) {
   const { width, height } = useWindowDimensions();
+  const CX = center?.x ?? width / 2;
+  const CY = center?.y ?? height / 2;
+  const useStateColor = targetColor !== undefined;
 
-  const configs = useMemo(() => makeParticleConfigs(width, height), [width, height]);
-  const edgeDistance = useMemo(() => Math.max(width, height) * 0.9, [width, height]);
+  const containRadius = useMemo(() => Math.min(width, height) * 0.4, [width, height]);
+  const configs = useMemo(() => makeParticleConfigs(containRadius), [containRadius]);
 
   const time = useSharedValue(0);
-  const positions = useSharedValue(configs.map((c) => ({ x: c.baseX, y: c.baseY })));
+  const positions = useSharedValue(configs.map(() => ({ x: CX, y: CY })));
   const linesPath = useSharedValue('');
-  const pullDir = useSharedValue({ x: 0, y: 0 });
-  const pullProgress = useSharedValue(0);
+
+  // Focus state: a single eased amount (0..1) plus the direction it's aimed at.
+  // 0 = idle/centered. ~HOVER_CAP = leaning toward a direction as a preview.
+  // 1 = fully committed — compacted, glowing, and exiting off that edge.
+  const focusVec = useSharedValue({ x: 0, y: 0 });
+  const focusTarget = useSharedValue(0);
+  const focusEaseRate = useSharedValue(HOVER_EASE_RATE);
+  const focusAmt = useSharedValue(0);
+
+  // State-driven color + energy (voice call usage only — see props above).
+  // Only used to seed the initial shared-value color; later changes to
+  // targetColor are picked up by the effect below, not by re-running this.
+  const initialRGB = useMemo(() => hexToRgb(targetColor ?? '#4FC3F7'), []);
+  const curR = useSharedValue(initialRGB.r);
+  const curG = useSharedValue(initialRGB.g);
+  const curB = useSharedValue(initialRGB.b);
+  const targetR = useSharedValue(initialRGB.r);
+  const targetG = useSharedValue(initialRGB.g);
+  const targetB = useSharedValue(initialRGB.b);
+  const energyTarget = useSharedValue(energy ?? 0);
+  const energyAmt = useSharedValue(energy ?? 0);
+
+  useEffect(() => {
+    if (!targetColor) return;
+    const rgb = hexToRgb(targetColor);
+    targetR.value = rgb.r;
+    targetG.value = rgb.g;
+    targetB.value = rgb.b;
+  }, [targetColor, targetR, targetG, targetB]);
+
+  useEffect(() => {
+    energyTarget.value = energy ?? 0;
+  }, [energy, energyTarget]);
+
+  useImperativeHandle(ref, () => ({
+    lean: (direction, amt) => {
+      focusVec.value = DIRECTION_VECTORS[direction];
+      focusTarget.value = Math.min(HOVER_CAP, Math.max(0, amt) * HOVER_CAP);
+      focusEaseRate.value = HOVER_EASE_RATE;
+    },
+    release: () => {
+      focusTarget.value = 0;
+      focusEaseRate.value = HOVER_EASE_RATE;
+    },
+    commit: (direction) => {
+      focusVec.value = DIRECTION_VECTORS[direction];
+      focusTarget.value = 1;
+      focusEaseRate.value = COMMIT_EASE_RATE;
+    },
+    reset: () => {
+      focusTarget.value = 0;
+      focusAmt.value = 0;
+      focusVec.value = { x: 0, y: 0 };
+    },
+  }));
 
   useFrameCallback((frameInfo) => {
     'worklet';
     const dt = (frameInfo.timeSincePreviousFrame ?? 16) / 1000;
     time.value += dt;
     const t = time.value;
-    const dir = pullDir.value;
-    const pull = pullProgress.value;
+
+    focusAmt.value += (focusTarget.value - focusAmt.value) * Math.min(1, focusEaseRate.value * dt);
+    const amt = focusAmt.value;
+    const vec = focusVec.value;
+
+    if (useStateColor) {
+      curR.value += (targetR.value - curR.value) * STATE_COLOR_EASE_RATE;
+      curG.value += (targetG.value - curG.value) * STATE_COLOR_EASE_RATE;
+      curB.value += (targetB.value - curB.value) * STATE_COLOR_EASE_RATE;
+      energyAmt.value += (energyTarget.value - energyAmt.value) * STATE_ENERGY_EASE_RATE;
+    }
+
+    const compact = 1 - 0.6 * amt;
+    const offsetDist = containRadius * 1.4 * amt;
+    const focusCX = CX + vec.x * offsetDist;
+    const focusCY = CY + vec.y * offsetDist;
+    const breathingAmp = useStateColor ? 0.14 + 0.16 * energyAmt.value : 0.14;
+    const breathing = 1 + breathingAmp * Math.sin((t / BREATH_PERIOD_S) * 2 * Math.PI) * (1 - amt * 0.6);
 
     const next: { x: number; y: number }[] = new Array(configs.length);
     for (let i = 0; i < configs.length; i++) {
       const c = configs[i];
-      const nx = (valueNoise1D(t * c.freqX + c.seedX) * 2 - 1) * c.ampX;
-      const ny = (valueNoise1D(t * c.freqY + c.seedY) * 2 - 1) * c.ampY;
-      let x = c.baseX + nx;
-      let y = c.baseY + ny;
-      if (pull > 0) {
-        x += dir.x * edgeDistance * pull;
-        y += dir.y * edgeDistance * pull;
-      }
-      next[i] = { x, y };
+      const nx = (valueNoise1D(t * c.freqX + c.seedX) * 2 - 1) * c.ampX * compact;
+      const ny = (valueNoise1D(t * c.freqY + c.seedY) * 2 - 1) * c.ampY * compact;
+      const homeX = focusCX + Math.cos(c.homeAngle) * c.homeRadius * compact * breathing;
+      const homeY = focusCY + Math.sin(c.homeAngle) * c.homeRadius * compact * breathing;
+      next[i] = { x: homeX + nx, y: homeY + ny };
     }
     positions.value = next;
 
@@ -157,35 +271,35 @@ export default function EntityBackground({ swipeDirection = null }: EntityBackgr
     linesPath.value = d;
   }, true);
 
-  useEffect(() => {
-    if (swipeDirection) {
-      pullDir.value = DIRECTION_VECTORS[swipeDirection];
-      pullProgress.value = withTiming(1, { duration: PULL_DURATION_MS, easing: Easing.in(Easing.cubic) });
-    } else {
-      pullProgress.value = 0;
-    }
-  }, [swipeDirection, pullDir, pullProgress]);
-
   const fillColor = useDerivedValue(() => {
+    if (useStateColor) {
+      return `rgb(${Math.round(curR.value)}, ${Math.round(curG.value)}, ${Math.round(curB.value)})`;
+    }
     const cycle = (Math.sin((time.value / COLOR_PERIOD_S) * 2 * Math.PI) + 1) / 2;
     return interpolateColor(cycle, [0, 1], ['#4FC3F7', '#E8624A']);
   });
 
-  const lineProps = useAnimatedProps(() => ({ d: linesPath.value }));
+  // Glow reacts to whichever driver is active for this screen — the hub's
+  // focus/commit system, or the voice call's audio energy. Baseline is 1
+  // (particles render at their configured size/opacity at rest); the boost
+  // on top goes up to +0.85x when focused or energetic. Passing raw
+  // focusAmt/energyAmt here (0 at rest) instead of this baseline+boost form
+  // would make particles render at r≈0, opacity≈0 — invisible at idle.
+  const glow = useDerivedValue(() => 1 + 0.85 * Math.max(focusAmt.value, energyAmt.value));
 
-  const breathStyle = useAnimatedStyle(() => {
-    const scale = 1 + 0.03 * Math.sin((time.value / BREATH_PERIOD_S) * 2 * Math.PI);
-    return { transform: [{ scale }] };
-  });
+  const lineProps = useAnimatedProps(() => ({
+    d: linesPath.value,
+    strokeOpacity: Math.min(0.5, 0.16 * (1 + 1.3 * Math.max(focusAmt.value, energyAmt.value))),
+  }));
 
   return (
-    <Animated.View style={[StyleSheet.absoluteFill, breathStyle]} pointerEvents="none">
-      <Svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
-        <AnimatedPath stroke="#4FC3F7" strokeOpacity={0.16} strokeWidth={1} fill="none" animatedProps={lineProps} />
-        {configs.map((config, index) => (
-          <Particle key={index} index={index} config={config} positions={positions} fillColor={fillColor} />
-        ))}
-      </Svg>
-    </Animated.View>
+    <Svg style={StyleSheet.absoluteFill} width={width} height={height} viewBox={`0 0 ${width} ${height}`} pointerEvents="none">
+      <AnimatedPath stroke="#8FD6FF" strokeWidth={1} fill="none" animatedProps={lineProps} />
+      {configs.map((config, index) => (
+        <Particle key={index} index={index} config={config} positions={positions} fillColor={fillColor} glow={glow} />
+      ))}
+    </Svg>
   );
-}
+});
+
+export default EntityBackground;

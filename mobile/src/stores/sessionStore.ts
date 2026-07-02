@@ -7,6 +7,7 @@ import {
   insertCravingEvent,
   updateCravingEvent,
 } from '../services/localDb';
+import { scopedKey } from '../services/scopedStorage';
 
 const PERSIST_KEYS = {
   sessionCount: 'bb_session_count',
@@ -110,7 +111,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     set((state) => {
       const newCount = state.sessionCount + 1;
-      AsyncStorage.setItem(PERSIST_KEYS.sessionCount, String(newCount)).catch(() => {});
+      AsyncStorage.setItem(scopedKey(PERSIST_KEYS.sessionCount), String(newCount)).catch(() => {});
       return {
         sessionId,
         mode,
@@ -146,7 +147,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     const nonEmpty = current.messages.filter(m => m.content.length > 0);
     if (nonEmpty.length > 0) {
-      AsyncStorage.setItem(PERSIST_KEYS.lastSessionMessages, JSON.stringify(nonEmpty.slice(-30))).catch(() => {});
+      AsyncStorage.setItem(scopedKey(PERSIST_KEYS.lastSessionMessages), JSON.stringify(nonEmpty.slice(-30))).catch(() => {});
 
       // Always generate a session report when there's meaningful content
       import('../services/outcomeRecorder').then(({ recordOutcome }) => {
@@ -254,12 +255,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   setTriggerContext: (ctx) => set({ triggerContext: ctx }),
 
   setProfileSummary: (summary) => {
-    AsyncStorage.setItem(PERSIST_KEYS.profileSummary, summary).catch(() => {});
+    AsyncStorage.setItem(scopedKey(PERSIST_KEYS.profileSummary), summary).catch(() => {});
     set({ profileSummary: summary });
   },
 
   setRecentHistory: (history) => {
-    AsyncStorage.setItem(PERSIST_KEYS.recentHistory, history).catch(() => {});
+    AsyncStorage.setItem(scopedKey(PERSIST_KEYS.recentHistory), history).catch(() => {});
     set({ recentHistory: history });
   },
 
@@ -283,11 +284,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 export async function hydrateSessionStore(): Promise<void> {
   try {
     const [countStr, profile, history, lastMsgs, reportsStr] = await Promise.all([
-      AsyncStorage.getItem(PERSIST_KEYS.sessionCount),
-      AsyncStorage.getItem(PERSIST_KEYS.profileSummary),
-      AsyncStorage.getItem(PERSIST_KEYS.recentHistory),
-      AsyncStorage.getItem(PERSIST_KEYS.lastSessionMessages),
-      AsyncStorage.getItem('bb_session_reports'),
+      AsyncStorage.getItem(scopedKey(PERSIST_KEYS.sessionCount)),
+      AsyncStorage.getItem(scopedKey(PERSIST_KEYS.profileSummary)),
+      AsyncStorage.getItem(scopedKey(PERSIST_KEYS.recentHistory)),
+      AsyncStorage.getItem(scopedKey(PERSIST_KEYS.lastSessionMessages)),
+      AsyncStorage.getItem(scopedKey('bb_session_reports')),
     ]);
 
     let finalProfile = profile || 'New user — no history yet.';
@@ -302,8 +303,8 @@ export async function hydrateSessionStore(): Promise<void> {
           const built = buildLocalProfile(reports);
           finalProfile = built.summary;
           finalHistory = built.recentHistory;
-          AsyncStorage.setItem(PERSIST_KEYS.profileSummary, finalProfile).catch(() => {});
-          AsyncStorage.setItem(PERSIST_KEYS.recentHistory, finalHistory).catch(() => {});
+          AsyncStorage.setItem(scopedKey(PERSIST_KEYS.profileSummary), finalProfile).catch(() => {});
+          AsyncStorage.setItem(scopedKey(PERSIST_KEYS.recentHistory), finalHistory).catch(() => {});
         }
       } catch {}
     }

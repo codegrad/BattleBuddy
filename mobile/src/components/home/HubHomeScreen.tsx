@@ -19,15 +19,17 @@ import EntityBackground from './EntityBackground';
 import { recordSessionOutcome } from '../../services/outcomeRecorder';
 import { useAuthStore } from '../../stores/authStore';
 import { Colors } from '../../theme';
-import { NAV_ROUTES, type Direction } from '../../lib/navDirections';
+import { NAV_ROUTES, NAV_LABELS, type Direction } from '../../lib/navDirections';
 
 const BB_SIZE = 80;
 const GLOW_SIZE = BB_SIZE + 24;
 const ICON_SIZE = 56;
-const TAP_MAX_DISTANCE = 5;
+const CIRCLE_HIT_SLOP = 28;
+const LONG_PRESS_MIN_DURATION = 400;
 const PAN_MIN_DISTANCE = 5;
 const AXIS_LOCK_THRESHOLD = 8;
-const DRAG_COMMIT_RATIO = 0.25;
+// Mike's spec: commit past ~40% of screen height/width, or a fast enough flick.
+const DRAG_COMMIT_RATIO = 0.4;
 const VELOCITY_COMMIT_THRESHOLD = 500;
 const DRAG_SCALE = 1.4;
 const HINT_KEY = '@bb_swipe_hint_shown';
@@ -169,16 +171,23 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
     }));
   }, [menuOpacity, resistedFly, gaveInFly]);
 
-  const tapGesture = Gesture.Tap()
-    .maxDistance(TAP_MAX_DISTANCE)
-    .onEnd((_e, success) => {
-      if (!success) return;
-      tapPulse.value = withSequence(withTiming(1.4, { duration: 75 }), withTiming(1, { duration: 75 }));
+  // Quick-log (Resisted/Gave In) now lives on a long-press instead of a
+  // plain tap, since a tap-and-drag on the circle is the primary gesture —
+  // holding still is unambiguous, a quick tap-then-immediately-drag isn't.
+  const longPressGesture = Gesture.LongPress()
+    .minDuration(LONG_PRESS_MIN_DURATION)
+    .hitSlop(CIRCLE_HIT_SLOP)
+    .onStart(() => {
+      tapPulse.value = withSequence(withTiming(1.15, { duration: 90 }), withTiming(1, { duration: 90 }));
       runOnJS(openMenu)();
     });
 
+  // The BB circle is the sole navigation handle — tap-and-hold it to "pick
+  // it up" (scale + glow, below), then drag toward an edge to navigate.
+  // Dragging anywhere else on screen does nothing.
   const panGesture = Gesture.Pan()
     .minDistance(PAN_MIN_DISTANCE)
+    .hitSlop(CIRCLE_HIT_SLOP)
     .onStart(() => {
       lockedAxis.value = null;
       dragScale.value = withSpring(DRAG_SCALE, { damping: 14, stiffness: 180 });
@@ -220,8 +229,9 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
       if (dragRatio > DRAG_COMMIT_RATIO || velocity > VELOCITY_COMMIT_THRESHOLD) {
         const targetX = dir === 'left' ? -SCREEN_W : dir === 'right' ? SCREEN_W : 0;
         const targetY = dir === 'up' ? -SCREEN_H : dir === 'down' ? SCREEN_H : 0;
-        translateX.value = withTiming(targetX, { duration: 320, easing: Easing.out(Easing.cubic) });
-        translateY.value = withTiming(targetY, { duration: 320, easing: Easing.out(Easing.cubic) }, (finished) => {
+        const commitSpring = { damping: 18, stiffness: 220 };
+        translateX.value = withSpring(targetX, { ...commitSpring, velocity: e.velocityX });
+        translateY.value = withSpring(targetY, { ...commitSpring, velocity: e.velocityY }, (finished) => {
           if (finished) runOnJS(navigateTo)(dir);
         });
       } else {
@@ -233,6 +243,11 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
       }
       lockedAxis.value = null;
     });
+
+  // Pan wins on real movement (minDistance), long-press wins on holding
+  // still — mutually exclusive by construction, so a single gesture on the
+  // circle unambiguously resolves to "drag to navigate" or "hold to log".
+  const circleGesture = Gesture.Exclusive(panGesture, longPressGesture);
 
   const screenStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }, { translateY: translateY.value }],
@@ -270,61 +285,59 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
   }));
 
   return (
-    <GestureDetector gesture={panGesture}>
-      <View style={styles.container}>
-        <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.down }, downPreviewStyle]} pointerEvents="none">
-          <Text style={[styles.destLabelHorizontal, styles.destLabelTop]}>VOICE</Text>
-        </Animated.View>
-        <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.up }, upPreviewStyle]} pointerEvents="none">
-          <Text style={[styles.destLabelHorizontal, styles.destLabelBottom]}>CHAT</Text>
-        </Animated.View>
-        <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.left }, leftPreviewStyle]} pointerEvents="none">
-          <View style={[styles.destLabelVerticalWrap, styles.destLabelVerticalWrapRight]}>
-            <Text style={[styles.destLabelVertical, styles.destLabelRotateRight]}>CONTENT</Text>
-          </View>
-        </Animated.View>
-        <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.right }, rightPreviewStyle]} pointerEvents="none">
-          <View style={[styles.destLabelVerticalWrap, styles.destLabelVerticalWrapLeft]}>
-            <Text style={[styles.destLabelVertical, styles.destLabelRotateLeft]}>PROFILE</Text>
-          </View>
-        </Animated.View>
+    <View style={styles.container}>
+      <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.down }, downPreviewStyle]} pointerEvents="none">
+        <Text style={[styles.destLabelHorizontal, styles.destLabelTop]}>{NAV_LABELS.down.toUpperCase()}</Text>
+      </Animated.View>
+      <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.up }, upPreviewStyle]} pointerEvents="none">
+        <Text style={[styles.destLabelHorizontal, styles.destLabelBottom]}>{NAV_LABELS.up.toUpperCase()}</Text>
+      </Animated.View>
+      <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.left }, leftPreviewStyle]} pointerEvents="none">
+        <View style={[styles.destLabelVerticalWrap, styles.destLabelVerticalWrapRight]}>
+          <Text style={[styles.destLabelVertical, styles.destLabelRotateRight]}>{NAV_LABELS.left.toUpperCase()}</Text>
+        </View>
+      </Animated.View>
+      <Animated.View style={[styles.preview, { backgroundColor: DEST_TINTS.right }, rightPreviewStyle]} pointerEvents="none">
+        <View style={[styles.destLabelVerticalWrap, styles.destLabelVerticalWrapLeft]}>
+          <Text style={[styles.destLabelVertical, styles.destLabelRotateLeft]}>{NAV_LABELS.right.toUpperCase()}</Text>
+        </View>
+      </Animated.View>
 
-        <Animated.View style={[styles.screen, screenStyle]}>
-          <EntityBackground />
+      <Animated.View style={[styles.screen, screenStyle]}>
+        <EntityBackground />
 
-          {menuOpen && <Pressable style={StyleSheet.absoluteFill} onPress={closeMenu} />}
+        {menuOpen && <Pressable style={StyleSheet.absoluteFill} onPress={closeMenu} />}
 
-          <View style={styles.hub} pointerEvents="box-none">
-            <Animated.View style={[styles.optionWrap, styles.optionLeft, resistedStyle]} pointerEvents={menuOpen ? 'auto' : 'none'}>
-              <TouchableOpacity style={styles.optionChip} activeOpacity={0.8} onPress={() => handleOutcome('resisted')}>
-                <Text style={styles.optionEmoji}>💪</Text>
-              </TouchableOpacity>
-              <Text style={styles.optionLabel}>Resisted</Text>
-            </Animated.View>
+        <View style={styles.hub} pointerEvents="box-none">
+          <Animated.View style={[styles.optionWrap, styles.optionLeft, resistedStyle]} pointerEvents={menuOpen ? 'auto' : 'none'}>
+            <TouchableOpacity style={styles.optionChip} activeOpacity={0.8} onPress={() => handleOutcome('resisted')}>
+              <Text style={styles.optionEmoji}>💪</Text>
+            </TouchableOpacity>
+            <Text style={styles.optionLabel}>Resisted</Text>
+          </Animated.View>
 
-            <Animated.View style={[styles.optionWrap, styles.optionRight, gaveInStyle]} pointerEvents={menuOpen ? 'auto' : 'none'}>
-              <TouchableOpacity style={styles.optionChip} activeOpacity={0.8} onPress={() => handleOutcome('gave_in')}>
-                <Text style={styles.optionEmoji}>😐</Text>
-              </TouchableOpacity>
-              <Text style={styles.optionLabel}>Gave In</Text>
-            </Animated.View>
+          <Animated.View style={[styles.optionWrap, styles.optionRight, gaveInStyle]} pointerEvents={menuOpen ? 'auto' : 'none'}>
+            <TouchableOpacity style={styles.optionChip} activeOpacity={0.8} onPress={() => handleOutcome('gave_in')}>
+              <Text style={styles.optionEmoji}>😐</Text>
+            </TouchableOpacity>
+            <Text style={styles.optionLabel}>Gave In</Text>
+          </Animated.View>
 
-            <Animated.View style={[styles.glowRing, glowStyle]} pointerEvents="none" />
+          <Animated.View style={[styles.glowRing, glowStyle]} pointerEvents="none" />
 
-            <GestureDetector gesture={tapGesture}>
-              <Animated.View style={[styles.bbCircle, circleStyle]} />
-            </GestureDetector>
+          <GestureDetector gesture={circleGesture}>
+            <Animated.View style={[styles.bbCircle, circleStyle]} />
+          </GestureDetector>
 
-            {showHint && (
-              <>
-                <Animated.View style={[styles.hintRing, hintRingStyle]} pointerEvents="none" />
-                <Animated.View style={[styles.hintDrag, hintDragStyle]} pointerEvents="none" />
-              </>
-            )}
-          </View>
-        </Animated.View>
-      </View>
-    </GestureDetector>
+          {showHint && (
+            <>
+              <Animated.View style={[styles.hintRing, hintRingStyle]} pointerEvents="none" />
+              <Animated.View style={[styles.hintDrag, hintDragStyle]} pointerEvents="none" />
+            </>
+          )}
+        </View>
+      </Animated.View>
+    </View>
   );
 }
 

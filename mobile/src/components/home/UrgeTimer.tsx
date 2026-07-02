@@ -3,6 +3,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Spacing } from '../../theme';
 import { LAST_OUTCOME_KEY, type LastOutcome } from '../../services/outcomeRecorder';
+import { scopedKey } from '../../services/scopedStorage';
 
 function formatElapsed(ms: number): string {
   const totalMinutes = Math.floor(ms / 60_000);
@@ -34,7 +35,7 @@ export default function UrgeTimer() {
   const [lastOutcome, setLastOutcome] = useState<LastOutcome | null>(null);
 
   useEffect(() => {
-    AsyncStorage.getItem(LAST_OUTCOME_KEY).then((raw) => {
+    AsyncStorage.getItem(scopedKey(LAST_OUTCOME_KEY)).then((raw) => {
       if (raw) {
         try { setLastOutcome(JSON.parse(raw)); } catch {}
       }
@@ -44,7 +45,7 @@ export default function UrgeTimer() {
   // Re-read after returning from a session (storage may have changed)
   useEffect(() => {
     const interval = setInterval(() => {
-      AsyncStorage.getItem(LAST_OUTCOME_KEY).then((raw) => {
+      AsyncStorage.getItem(scopedKey(LAST_OUTCOME_KEY)).then((raw) => {
         if (raw) {
           try {
             const parsed: LastOutcome = JSON.parse(raw);

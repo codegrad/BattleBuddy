@@ -6,7 +6,7 @@ import { Colors } from '../../src/theme';
 
 export default function ProfileScreen() {
   return (
-    <EdgeEntrance edge="right">
+    <EdgeEntrance edge="left">
       <View style={styles.root}>
         <HomeButton />
         <SafeAreaView style={styles.container}>

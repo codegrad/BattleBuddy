@@ -60,7 +60,7 @@ export default function ContentFeedScreen() {
   const goVoice = useCallback(() => router.push('/session-voice'), []);
 
   return (
-    <EdgeEntrance edge="left">
+    <EdgeEntrance edge="right">
     <View style={styles.container}>
       <StatusBar style="light" />
 

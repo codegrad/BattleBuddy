@@ -16,6 +16,12 @@
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_B6tSNseYclLgC-kxliZjwA_HYQsclBK"
       }
     },
+    "development-simulator": {
+      "extends": "development",
+      "ios": {
+        "simulator": true
+      }
+    },
     "preview": {
       "distribution": "internal",
       "ios": {
