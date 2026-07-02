@@ -142,7 +142,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const theme = $('Split By Theme').first().json.theme;\nconst raw = $input.first().json.content[0].text;\nconst match = raw.match(/\\[[\\s\\S]*\\]/);\nconst prompts = JSON.parse(match ? match[0] : raw);\nreturn prompts.map((prompt) => ({ json: { theme, prompt } }));"
+        "jsCode": "const theme = $('Split By Theme').first().json.theme;\nconst raw = $input.first().json.content[0].text;\nconst match = raw.match(/\\[[\\s\\S]*\\]/);\nconst prompts = JSON.parse(match ? match[0] : raw);\n// __fresh marks items entering Split By Prompt as a NEW collection so its\n// reset expression fires \u2014 without it the inner loop stays exhausted after\n// the first theme and every later theme passes straight to \"done\"\n// (the bug that made every run produce exactly one video).\nreturn prompts.map((prompt) => ({ json: { theme, prompt, __fresh: true } }));"
       }
     },
     {
@@ -156,7 +156,9 @@
       ],
       "parameters": {
         "batchSize": 1,
-        "options": {}
+        "options": {
+          "reset": "={{ $json.__fresh === true }}"
+        }
       }
     },
     {
