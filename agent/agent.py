@@ -7,9 +7,11 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from dotenv import load_dotenv
+import httpx
 from livekit import agents
-from livekit.agents import AgentServer, AgentSession, Agent, function_tool
+from livekit.agents import AgentServer, AgentSession, Agent, function_tool, APIConnectOptions
 from livekit.agents.llm import ChatContext
+from livekit.agents.voice.agent_session import SessionConnectOptions
 from livekit.plugins import anthropic, deepgram
 import aiohttp
 import asyncio
@@ -217,10 +219,25 @@ async def battlebuddy_session(ctx: agents.JobContext):
 
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
-        llm=anthropic.LLM(model="claude-haiku-4-5-20251001"),
+        # caching="ephemeral" caches the big system prompt + tools across turns
+        # (the ~15K-token prompt was reprocessed cold on every turn, pushing
+        # first-token time past the framework's 10s per-attempt default and
+        # surfacing as BB "stuck thinking"). Generous read timeout for the
+        # uncached first turn.
+        llm=anthropic.LLM(
+            model="claude-haiku-4-5-20251001",
+            caching="ephemeral",
+            timeout=httpx.Timeout(10.0, read=90.0),
+        ),
         tts=deepgram.TTS(model=get_voice()),
         min_endpointing_delay=0.5,
         max_endpointing_delay=1.5,
+        # Our on_user_turn_completed injects the local time each turn, which
+        # invalidates every preemptive generation — pure duplicate LLM load.
+        preemptive_generation=False,
+        conn_options=SessionConnectOptions(
+            llm_conn_options=APIConnectOptions(max_retry=3, retry_interval=1.0, timeout=45.0),
+        ),
     )
 
     @session.on("conversation_item_added")
