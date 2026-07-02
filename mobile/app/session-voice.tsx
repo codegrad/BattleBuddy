@@ -220,7 +220,7 @@ export default function SessionVoiceScreen() {
   }, []);
 
   return (
-    <EdgeEntrance edge="up">
+    <EdgeEntrance edge="down">
     <View style={styles.container}>
       <StatusBar style="light" />
       <HomeButton />
@@ -309,7 +309,7 @@ export default function SessionVoiceScreen() {
       {ending && <EndCallOverlay onComplete={handleEndCallComplete} />}
       {showOutcome && <OutcomeCapture onComplete={handleOutcomeComplete} />}
 
-      <BBNavOverlay currentDirection="up" anchor="bottom-center" />
+      <BBNavOverlay currentDirection="down" anchor="bottom-center" />
     </View>
     </EdgeEntrance>
   );

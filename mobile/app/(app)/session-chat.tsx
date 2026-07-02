@@ -31,11 +31,11 @@ export default function SessionChatScreen() {
   }, [switchMode]);
 
   return (
-    <EdgeEntrance edge="down">
+    <EdgeEntrance edge="up">
       <View style={styles.container}>
         <ChatBottomSheet open onClose={handleClose} onSwitchToVoice={handleSwitchToVoice} />
         <HomeButton topOffset={6} />
-        <BBNavOverlay currentDirection="down" anchor="bottom-right" />
+        <BBNavOverlay currentDirection="up" anchor="bottom-right" />
       </View>
     </EdgeEntrance>
   );
