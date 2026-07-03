@@ -140,12 +140,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   endSession: () => {
     const current = get();
+    const nonEmpty = current.messages.filter(m => m.content.length > 0);
 
     if (current.sessionId) {
       updateCravingEvent(current.sessionId, { ended_at: Date.now() }).catch(() => {});
+      // Ghost-session guard: a session opened and closed with no conversation
+      // is a failed initialization, not data — mark it synced locally so the
+      // sync worker never uploads it (the audit found 80+ of these).
+      if (nonEmpty.length === 0) {
+        import('../services/localDb').then(({ markEventsSynced }) => {
+          markEventsSynced([current.sessionId!]).catch(() => {});
+        }).catch(() => {});
+      }
     }
-
-    const nonEmpty = current.messages.filter(m => m.content.length > 0);
     if (nonEmpty.length > 0) {
       AsyncStorage.setItem(scopedKey(PERSIST_KEYS.lastSessionMessages), JSON.stringify(nonEmpty.slice(-30))).catch(() => {});
 

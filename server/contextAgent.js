@@ -994,6 +994,10 @@ export async function analyzeAndUpdate(rawUserId, messages, isSessionEnd = false
     profile.last_session_at = sessionTimestamp;
   }
 
+  // Persist the user's timezone so schedulers (nudges, audits) can evaluate
+  // their local clock instead of assuming the default.
+  if (timezone) profile.timezone = timezone;
+
   // The user's local time right now — used to resolve "I just had a cigarette" to an actual clock time
   let localNow, localDate;
   try {

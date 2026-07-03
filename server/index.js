@@ -7,7 +7,7 @@ process.on('unhandledRejection', (err) => {
 });
 
 import { createServer } from 'node:http';
-import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
@@ -1010,6 +1010,13 @@ const server = createServer(async (req, res) => {
             syncedIds.push(e.id);
             continue;
           }
+          // Ghost session guard: opened and abandoned in <10s with no outcome
+          // — ack it (so the client stops retrying) but don't store it.
+          const durMs = e.ended_at ? new Date(e.ended_at).getTime() - new Date(e.started_at).getTime() : null;
+          if (!e.outcome && durMs !== null && durMs >= 0 && durMs < 10000) {
+            syncedIds.push(e.id);
+            continue;
+          }
           let triggerContext = null;
           try { triggerContext = e.trigger_context ? JSON.parse(e.trigger_context) : null; } catch {}
 
@@ -1446,6 +1453,61 @@ Return ONLY the JSON object, no markdown, no explanation.`;
       const events = await queryEvents(resolveUserId(userId), { date, eventTypes, limit, timezone });
       res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ events, count: events.length }));
+    } catch (err) {
+      res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: err.message }));
+    }
+  }
+
+  // One-shot hygiene sweep: deletes ghost transcript files (sessions that
+  // captured <2 real messages — failed initializations) and ghost session
+  // rows in bb_events (opened and abandoned within 10s, no outcome). The
+  // nightly audit flagged 80+ of these polluting the record.
+  if (req.method === 'POST' && req.url === '/admin/cleanup') {
+    try {
+      const result = { transcripts_deleted: 0, ghost_sessions_deleted: 0 };
+      const storeDir = process.env.CONTEXT_STORE_DIR || resolve(__dirname, 'context-store');
+      const transcriptsRoot = resolve(storeDir, 'session-transcripts');
+
+      let userDirs = [];
+      try { userDirs = readdirSync(transcriptsRoot); } catch {}
+      for (const userId of userDirs) {
+        const dir = resolve(transcriptsRoot, userId);
+        let files = [];
+        try { files = readdirSync(dir).filter(f => f.endsWith('.json')); } catch { continue; }
+        for (const f of files) {
+          try {
+            const d = JSON.parse(readFileSync(resolve(dir, f), 'utf-8'));
+            const real = (d.messages || []).filter(m => (m.content || '').trim().length > 0);
+            if (real.length < 2) {
+              unlinkSync(resolve(dir, f));
+              result.transcripts_deleted++;
+            }
+          } catch {}
+        }
+      }
+
+      if (supabase) {
+        const { data } = await supabase
+          .from('bb_events')
+          .select('id, occurred_at, metadata')
+          .eq('event_type', 'session')
+          .limit(1000);
+        const ghosts = (data || []).filter(r => {
+          const m = r.metadata || {};
+          if (m.outcome) return false;
+          if (!m.ended_at) return false;
+          const dur = new Date(m.ended_at).getTime() - new Date(r.occurred_at).getTime();
+          return dur >= 0 && dur < 10000;
+        }).map(r => r.id);
+        if (ghosts.length) {
+          const { error } = await supabase.from('bb_events').delete().in('id', ghosts);
+          if (!error) result.ghost_sessions_deleted = ghosts.length;
+        }
+      }
+
+      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(result));
     } catch (err) {
       res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: err.message }));
