@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -26,7 +26,6 @@ import type { MascotState } from '../src/components/mascot';
 import EndCallOverlay from '../src/components/voice/EndCallOverlay';
 import OutcomeCapture from '../src/components/feed/OutcomeCapture';
 import HomeButton from '../src/components/common/HomeButton';
-import BBNavOverlay from '../src/components/common/BBNavOverlay';
 import EdgeEntrance from '../src/components/common/EdgeEntrance';
 import { useSessionStore } from '../src/stores/sessionStore';
 import { useAuthStore } from '../src/stores/authStore';
@@ -50,7 +49,7 @@ const STATE_BASE_ENERGY: Record<MascotState, number> = {
   idle: 0.15,
   listening: 0.18,
   user_speaking: 0.5,
-  speaking: 0.6,
+  speaking: 1.0,
   thinking: 0.3,
   celebrating: 0.5,
   empathy: 0.2,
@@ -76,6 +75,8 @@ export default function SessionVoiceScreen() {
   const [wsUrl, setWsUrl] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
   const [showOutcome, setShowOutcome] = useState(false);
+  const { width: windowWidth } = useWindowDimensions();
+  const [entityCenter, setEntityCenter] = useState<{ x: number; y: number } | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [audioLevel, setAudioLevel] = useState(0);
   const [muted, setMuted] = useState(false);
@@ -243,9 +244,21 @@ export default function SessionVoiceScreen() {
           </Text>
         </View>
 
-        {/* Entity — same living presence as the hub, color/energy driven by call state */}
-        <View style={styles.mascotArea}>
-          <EntityBackground targetColor={entityColor} energy={entityEnergy} />
+        {/* Entity — same living presence as the hub, color/energy driven by
+            call state. The swarm is anchored to the BB circle's measured
+            center: the SVG canvas is window-sized, so rendering it inside a
+            header-offset container without a center left the whole entity
+            sagging toward the bottom of the screen. */}
+        <View
+          style={styles.mascotArea}
+          onLayout={(e) => {
+            // The entity Svg is absolute-fill INSIDE this container, so the
+            // anchor is in container-local coordinates: its own midpoint.
+            const { height: h } = e.nativeEvent.layout;
+            setEntityCenter({ x: windowWidth / 2, y: h / 2 });
+          }}
+        >
+          <EntityBackground targetColor={entityColor} energy={entityEnergy} center={entityCenter ?? undefined} />
           <Animated.View style={[styles.bbRing, ringStyle, { borderColor: entityColor }]} pointerEvents="none" />
           <View style={[styles.bbCircle, { borderColor: entityColor }]}>
             <Text style={styles.bbText}>BB</Text>
@@ -308,8 +321,6 @@ export default function SessionVoiceScreen() {
 
       {ending && <EndCallOverlay onComplete={handleEndCallComplete} />}
       {showOutcome && <OutcomeCapture onComplete={handleOutcomeComplete} />}
-
-      <BBNavOverlay currentDirection="down" anchor="bottom-center" />
     </View>
     </EdgeEntrance>
   );

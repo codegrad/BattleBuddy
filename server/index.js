@@ -639,8 +639,11 @@ const server = createServer(async (req, res) => {
     try {
       const { messages, profile, trigger_context, recent_history, userId, timezone } = JSON.parse(body);
 
-      // Use the context agent's profile if available, fall back to client-provided
-      const effectiveUserId = userId || 'default';
+      // Use the context agent's profile if available, fall back to client-provided.
+      // Anonymous fallback must NOT be 'default' — that aliases to the founder's
+      // profile (resolveUserId), which would hand his history to any client
+      // that omits userId (e.g. a fresh install before auth hydration).
+      const effectiveUserId = userId || `anon-${Date.now()}`;
       const contextProfile = buildProfileSummary(effectiveUserId);
       const finalProfile = (contextProfile && !contextProfile.includes('New user'))
         ? contextProfile
@@ -727,8 +730,9 @@ const server = createServer(async (req, res) => {
       at.addGrant({ roomJoin: true, room: roomName, canPublish: true, canSubscribe: true });
       const token = await at.toJwt();
 
-      // Use context agent's profile if available
-      const effectiveUserId = identity || 'default';
+      // Anonymous fallback must not inherit the founder's profile via the
+      // 'default' alias (see /session/turn note).
+      const effectiveUserId = identity || `anon-${Date.now()}`;
       const contextProfile = buildProfileSummary(effectiveUserId);
       const finalProfile = (contextProfile && !contextProfile.includes('New user'))
         ? contextProfile
@@ -1448,6 +1452,18 @@ Return ONLY the JSON object, no markdown, no explanation.`;
     }
   }
 
+  // Trigger a transcript audit on demand
+  if (req.method === 'POST' && req.url === '/admin/audit/run') {
+    try {
+      const result = await runTranscriptAudit(true);
+      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: err.message }));
+    }
+  }
+
   // ─── Admin panel ────────────────────────────────────────────────────────────
   if (req.method === 'GET' && req.url === '/admin') {
     const html = readFileSync(resolve(__dirname, 'admin.html'), 'utf-8');
@@ -1584,6 +1600,110 @@ Return ONLY the JSON object, no markdown, no explanation.`;
   res.writeHead(404, CORS);
   res.end('Not found');
 });
+
+// ─── Nightly transcript audit ─────────────────────────────────────────────────
+// Reads the last day's raw conversation transcripts and has Sonnet audit them
+// for agent-behavior wins/failures (with verbatim quotes) and app/product
+// issues the user mentioned. Report-only: results land in bb_events as
+// 'transcript_audit' rows (GET /events?eventTypes=transcript_audit) for review —
+// nothing is auto-applied to the prompt. Runs once per local day after 3 AM;
+// POST /admin/audit/run triggers it on demand.
+
+const AUDIT_HOUR = 3;
+
+async function runTranscriptAudit(force = false) {
+  if (!supabase) return { error: 'event store not configured' };
+  const storeDir = process.env.CONTEXT_STORE_DIR || resolve(__dirname, 'context-store');
+  const transcriptsRoot = resolve(storeDir, 'session-transcripts');
+
+  let userDirs = [];
+  try { userDirs = readdirSync(transcriptsRoot); } catch { return { error: 'no transcripts' }; }
+
+  const results = [];
+  for (const userId of userDirs) {
+    try {
+      const dir = resolve(transcriptsRoot, userId);
+      const cutoff = Date.now() - 26 * 3600 * 1000;
+      const sessions = readdirSync(dir).filter(f => f.endsWith('.json')).map(f => {
+        try { return JSON.parse(readFileSync(resolve(dir, f), 'utf-8')); } catch { return null; }
+      }).filter(s => s && s.updatedAt && new Date(s.updatedAt).getTime() > cutoff && (s.messages || []).length >= 4);
+
+      if (!sessions.length) continue;
+
+      let corpus = '';
+      for (const s of sessions.sort((a, b) => (a.updatedAt || '').localeCompare(b.updatedAt || ''))) {
+        corpus += `\n\n=== SESSION ${s.sessionId} (${s.updatedAt}) ===\n`;
+        for (const m of s.messages) {
+          const line = `${m.role === 'user' ? 'USER' : 'BB'}: ${m.content}\n`;
+          if (corpus.length + line.length > 90000) break;
+          corpus += line;
+        }
+      }
+
+      const response = await client.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 2000,
+        messages: [{
+          role: 'user',
+          content: `You are auditing raw conversation transcripts between a user and BattleBuddy (BB), a smoking-cessation companion agent. Produce a concise, evidence-based audit for the developer.
+
+Return JSON only:
+{
+  "agent_wins": ["specific BB behavior that landed well — include a short verbatim quote as evidence"],
+  "agent_failures": ["specific BB behavior that failed or eroded trust — verbatim quote + why it failed"],
+  "app_issues": ["bugs, UX problems, or missing capabilities the USER mentioned or that are evident (e.g. data loss, latency complaints, feature requests) — verbatim quote"],
+  "proposals": ["concrete, targeted change proposals for the agent prompt or app, each traceable to evidence above; rate each HIGH/MEDIUM/LOW confidence"],
+  "user_state": "one-paragraph read of where this user is in their quit journey based on these sessions",
+  "summary": "2-3 sentences: the single most important thing the developer should act on"
+}
+
+Transcripts:${corpus}`,
+        }],
+      });
+
+      const text = response.content[0]?.text || '{}';
+      let report;
+      try {
+        const { jsonrepair: jr } = await import('jsonrepair');
+        try { report = JSON.parse(text); } catch {
+          const m = text.match(/\{[\s\S]*\}/);
+          report = JSON.parse(jr(m ? m[0] : text));
+        }
+      } catch { report = { raw: text.slice(0, 4000) }; }
+
+      await supabase.from('bb_events').insert({
+        user_id: userId,
+        event_type: 'transcript_audit',
+        occurred_at: new Date().toISOString(),
+        metadata: {
+          source: 'nightly_audit',
+          sessions_audited: sessions.map(s => s.sessionId),
+          report,
+        },
+      });
+      results.push({ userId, sessions: sessions.length, summary: report.summary || null });
+      console.log(`[Audit] ${userId}: ${sessions.length} session(s) audited — ${report.summary || 'no summary'}`);
+    } catch (e) {
+      console.log(`[Audit] Error for ${userId}: ${e.message}`);
+    }
+  }
+  return { ok: true, audited: results };
+}
+
+const auditStatePath = () => resolve(process.env.CONTEXT_STORE_DIR || resolve(__dirname, 'context-store'), 'audit-state.json');
+
+setInterval(() => {
+  try {
+    const today = localDateInTz(DEFAULT_TZ);
+    const hour = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: DEFAULT_TZ, hour: 'numeric', hour12: false }).format(new Date()), 10);
+    let state = {};
+    try { state = JSON.parse(readFileSync(auditStatePath(), 'utf-8')); } catch {}
+    if (hour >= AUDIT_HOUR && state.last_run_date !== today) {
+      writeFileSync(auditStatePath(), JSON.stringify({ last_run_date: today }));
+      runTranscriptAudit().catch(e => console.log(`[Audit] Sweep failed: ${e.message}`));
+    }
+  } catch {}
+}, 30 * 60 * 1000);
 
 // ─── Proactive nudge scheduler ────────────────────────────────────────────────
 // The piece that was always missing: risk windows were learned into profiles

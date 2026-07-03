@@ -224,7 +224,11 @@ const EntityBackground = forwardRef<EntityBackgroundHandle, EntityBackgroundProp
   useFrameCallback((frameInfo) => {
     'worklet';
     const dt = (frameInfo.timeSincePreviousFrame ?? 16) / 1000;
-    time.value += dt;
+    // Energy accelerates the entity's internal clock: at full energy
+    // (BB speaking) the swarm moves ~2.8x faster — visibly alive, not a
+    // wallpaper. At rest it keeps the hub's calm drift.
+    const speedScale = useStateColor ? 1 + 1.8 * energyAmt.value : 1;
+    time.value += dt * speedScale;
     const t = time.value;
 
     focusAmt.value += (focusTarget.value - focusAmt.value) * Math.min(1, focusEaseRate.value * dt);
@@ -242,7 +246,7 @@ const EntityBackground = forwardRef<EntityBackgroundHandle, EntityBackgroundProp
     const offsetDist = containRadius * 1.4 * amt;
     const focusCX = CX + vec.x * offsetDist;
     const focusCY = CY + vec.y * offsetDist;
-    const breathingAmp = useStateColor ? 0.14 + 0.16 * energyAmt.value : 0.14;
+    const breathingAmp = useStateColor ? 0.14 + 0.34 * energyAmt.value : 0.14;
     const breathing = 1 + breathingAmp * Math.sin((t / BREATH_PERIOD_S) * 2 * Math.PI) * (1 - amt * 0.6);
 
     const next: { x: number; y: number }[] = new Array(configs.length);
@@ -285,11 +289,11 @@ const EntityBackground = forwardRef<EntityBackgroundHandle, EntityBackgroundProp
   // on top goes up to +0.85x when focused or energetic. Passing raw
   // focusAmt/energyAmt here (0 at rest) instead of this baseline+boost form
   // would make particles render at r≈0, opacity≈0 — invisible at idle.
-  const glow = useDerivedValue(() => 1 + 0.85 * Math.max(focusAmt.value, energyAmt.value));
+  const glow = useDerivedValue(() => 1 + 1.15 * Math.max(focusAmt.value, energyAmt.value));
 
   const lineProps = useAnimatedProps(() => ({
     d: linesPath.value,
-    strokeOpacity: Math.min(0.5, 0.16 * (1 + 1.3 * Math.max(focusAmt.value, energyAmt.value))),
+    strokeOpacity: Math.min(0.65, 0.16 * (1 + 2.2 * Math.max(focusAmt.value, energyAmt.value))),
   }));
 
   return (
