@@ -1626,7 +1626,13 @@ async function runTranscriptAudit(force = false) {
       const cutoff = Date.now() - 26 * 3600 * 1000;
       const sessions = readdirSync(dir).filter(f => f.endsWith('.json')).map(f => {
         try { return JSON.parse(readFileSync(resolve(dir, f), 'utf-8')); } catch { return null; }
-      }).filter(s => s && s.updatedAt && new Date(s.updatedAt).getTime() > cutoff && (s.messages || []).length >= 4);
+      })
+        .filter(s => s && s.updatedAt && new Date(s.updatedAt).getTime() > cutoff && (s.messages || []).length >= 4)
+        // A bulk offline sync can touch every historical file at once (103
+        // sessions matched the window on night one) — audit only the most
+        // recent handful; older material was already covered by prior runs.
+        .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
+        .slice(0, 12);
 
       if (!sessions.length) continue;
 
