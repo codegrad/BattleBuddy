@@ -62,13 +62,18 @@ const LIFE_ARCH_ARRAYS = [
 ];
 
 // Map of user ID aliases — redirects old IDs to the canonical one
-const USER_ALIASES = {
+export const USER_ALIASES = {
   'default': 'user-1782351957094',
   'user-1782249813276': 'user-1782351957094',
 };
 
 export function resolveUserId(userId) {
   return USER_ALIASES[userId] || userId;
+}
+
+/** All alias IDs that redirect to a given canonical ID (reverse lookup on USER_ALIASES). */
+function getAliasesFor(canonicalId) {
+  return Object.keys(USER_ALIASES).filter(alias => USER_ALIASES[alias] === canonicalId && alias !== canonicalId);
 }
 
 function getStorePath(userId) {
@@ -355,13 +360,35 @@ export function loadProfile(rawUserId) {
   const userId = resolveUserId(rawUserId);
   if (profiles[userId]) return profiles[userId];
 
+  let loaded = null;
   const path = getStorePath(userId);
   if (existsSync(path)) {
     try {
-      const raw = JSON.parse(readFileSync(path, 'utf-8'));
-      profiles[userId] = migrateProfile(raw);
-      return profiles[userId];
+      loaded = migrateProfile(JSON.parse(readFileSync(path, 'utf-8')));
     } catch {}
+  }
+
+  // Canonical file missing or empty (e.g. an alias's history never got merged in) —
+  // check known aliases on disk and adopt the first one with real session history.
+  if (!loaded || !loaded.session_count) {
+    for (const alias of getAliasesFor(userId)) {
+      const aliasPath = getStorePath(alias);
+      if (!existsSync(aliasPath)) continue;
+      try {
+        const aliasProfile = migrateProfile(JSON.parse(readFileSync(aliasPath, 'utf-8')));
+        if (aliasProfile.session_count) {
+          loaded = aliasProfile;
+          break;
+        }
+      } catch {}
+    }
+  }
+
+  if (loaded) {
+    profiles[userId] = loaded;
+    // Converge future reads onto the canonical file so this fallback is a one-time cost.
+    saveProfile(userId);
+    return profiles[userId];
   }
 
   profiles[userId] = {
