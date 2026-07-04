@@ -10,6 +10,20 @@ const OFFLINE_REPLY =
   'Your message is saved — try the urge-wave exercise: breathe in for 4 counts, hold for 4, out for 4. ' +
   "We'll pick back up when you're back online.";
 
+// Resolve the signed-in user id, waiting out the cold-start AsyncStorage
+// hydration race (up to ~2s). Never fall back to 'default' — that aliases to
+// the founder's profile server-side; an omitted/unknown id gets an anonymous
+// session, which is the correct behavior for a truly signed-out state.
+async function resolveAuthUserId(): Promise<string | undefined> {
+  for (let i = 0; i < 20; i++) {
+    const { user, loading } = useAuthStore.getState();
+    if (user?.id) return user.id;
+    if (!loading) return undefined;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return useAuthStore.getState().user?.id ?? undefined;
+}
+
 export function useSessionChat() {
   const store = useSessionStore();
   const abortRef = useRef<AbortController | null>(null);
@@ -46,7 +60,7 @@ export function useSessionChat() {
             profile: enrichWithEngagement(state.profileSummary),
             recentHistory: state.recentHistory,
             triggerContext: state.triggerContext,
-            userId: useAuthStore.getState().user?.id || 'default',
+            userId: await resolveAuthUserId(),
           },
           (accumulated) => {
             if (firstToken) {
@@ -110,6 +124,10 @@ export function useSessionChat() {
           profile: enrichWithEngagement(state.profileSummary),
           recentHistory: state.recentHistory,
           triggerContext: state.triggerContext,
+          // The greeting turn omitted userId entirely — the server had no way
+          // to load the profile, so BB opened every text session as a
+          // stranger ("acts like it doesn't know me").
+          userId: await resolveAuthUserId(),
         },
         (accumulated) => {
           if (firstToken) {
