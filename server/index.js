@@ -1643,7 +1643,7 @@ Return ONLY the JSON object, no markdown, no explanation.`;
   // Trigger a transcript audit on demand
   if (req.method === 'POST' && req.url === '/admin/audit/run') {
     try {
-      const result = await runTranscriptAudit(true);
+      const result = await runTranscriptAudit();
       res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
       return res.end(JSON.stringify(result));
     } catch (err) {
@@ -1794,10 +1794,8 @@ Return ONLY the JSON object, no markdown, no explanation.`;
 // for agent-behavior wins/failures (with verbatim quotes) and app/product
 // issues the user mentioned. Report-only: results land in bb_events as
 // 'transcript_audit' rows (GET /events?eventTypes=transcript_audit) for review —
-// nothing is auto-applied to the prompt. Runs once per local day after 3 AM;
-// POST /admin/audit/run triggers it on demand.
-
-const AUDIT_HOUR = 3;
+// nothing is auto-applied to the prompt. Runs from the continuous sweep
+// (delta-gated, at most hourly); POST /admin/audit/run triggers it on demand.
 
 /**
  * Memory consolidation — distills raw transcripts into dated, searchable
@@ -1870,7 +1868,7 @@ function loadRecentSessions(userId, { cutoffMs, limit = 12, minMessages = 4 } = 
     .slice(0, limit);
 }
 
-async function runTranscriptAudit(force = false) {
+async function runTranscriptAudit(sinceMs = Date.now() - 26 * 3600 * 1000) {
   if (!supabase) return { error: 'event store not configured' };
   const storeDir = process.env.CONTEXT_STORE_DIR || resolve(__dirname, 'context-store');
   const transcriptsRoot = resolve(storeDir, 'session-transcripts');
@@ -1883,17 +1881,8 @@ async function runTranscriptAudit(force = false) {
     try {
       // Bulk offline syncs can touch every historical file at once — audit
       // only the most recent handful; older material was covered by prior runs.
-      const sessions = loadRecentSessions(userId, { cutoffMs: Date.now() - 26 * 3600 * 1000 });
+      const sessions = loadRecentSessions(userId, { cutoffMs: sinceMs });
       if (!sessions.length) continue;
-
-      // Consolidate the same sessions into searchable memory entries so JIT
-      // recall keeps pace with the conversations.
-      try {
-        const stored = await consolidateMemories(userId, [...sessions].reverse());
-        if (stored) console.log(`[Consolidate] ${userId}: ${stored} memory entries stored`);
-      } catch (e) {
-        console.log(`[Consolidate] Error for ${userId}: ${e.message}`);
-      }
 
       let corpus = '';
       for (const s of sessions.sort((a, b) => (a.updatedAt || '').localeCompare(b.updatedAt || ''))) {
@@ -1962,18 +1951,49 @@ Transcripts:${corpus}`,
 
 const auditStatePath = () => resolve(process.env.CONTEXT_STORE_DIR || resolve(__dirname, 'context-store'), 'audit-state.json');
 
-setInterval(() => {
-  try {
-    const today = localDateInTz(DEFAULT_TZ);
-    const hour = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: DEFAULT_TZ, hour: 'numeric', hour12: false }).format(new Date()), 10);
-    let state = {};
-    try { state = JSON.parse(readFileSync(auditStatePath(), 'utf-8')); } catch {}
-    if (hour >= AUDIT_HOUR && state.last_run_date !== today) {
-      writeFileSync(auditStatePath(), JSON.stringify({ last_run_date: today }));
-      runTranscriptAudit().catch(e => console.log(`[Audit] Sweep failed: ${e.message}`));
+// Continuous improvement sweep — Mike's cadence requirement: "nightly is too
+// slow... we need deploys at least hourly." Every 20 minutes, consolidate any
+// NEW conversation activity into recallable memory (so recall lags a session
+// by minutes, not a day); at most once per hour, audit whatever accumulated.
+// Both steps are delta-gated: zero new sessions = zero Sonnet calls, keeping
+// the loop cost-proportional to actual usage.
+const SWEEP_INTERVAL_MS = 20 * 60 * 1000;
+const AUDIT_MIN_GAP_MS = 55 * 60 * 1000;
+
+async function runContinuousSweep() {
+  let state = {};
+  try { state = JSON.parse(readFileSync(auditStatePath(), 'utf-8')); } catch {}
+  const now = Date.now();
+  const consolidateSince = state.last_consolidate_at || (now - 26 * 3600 * 1000);
+  const auditSince = state.last_audit_at || (now - 26 * 3600 * 1000);
+
+  const storeDir = process.env.CONTEXT_STORE_DIR || resolve(__dirname, 'context-store');
+  let userDirs = [];
+  try { userDirs = readdirSync(resolve(storeDir, 'session-transcripts')); } catch { return; }
+
+  let newActivity = false;
+  for (const userId of userDirs) {
+    const sessions = loadRecentSessions(userId, { cutoffMs: consolidateSince });
+    if (!sessions.length) continue;
+    newActivity = true;
+    try {
+      const stored = await consolidateMemories(userId, [...sessions].reverse());
+      if (stored) console.log(`[Consolidate] ${userId}: ${stored} memory entries stored (hourly sweep)`);
+    } catch (e) {
+      console.log(`[Consolidate] Error for ${userId}: ${e.message}`);
     }
-  } catch {}
-}, 30 * 60 * 1000);
+  }
+  state.last_consolidate_at = now;
+
+  if (newActivity && now - (state.last_audit_at || 0) >= AUDIT_MIN_GAP_MS) {
+    state.last_audit_at = now;
+    runTranscriptAudit(auditSince).catch(e => console.log(`[Audit] Sweep failed: ${e.message}`));
+  }
+
+  writeFileSync(auditStatePath(), JSON.stringify(state));
+}
+
+setInterval(() => { runContinuousSweep().catch(() => {}); }, SWEEP_INTERVAL_MS);
 
 // ─── Proactive nudge scheduler ────────────────────────────────────────────────
 // The piece that was always missing: risk windows were learned into profiles
