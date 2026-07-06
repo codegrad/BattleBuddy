@@ -22,7 +22,7 @@ These docs are written to be read by a **Claude Code** (or Dispatch) session as 
 | `05-MODEL-STRATEGY.md` | Hybrid brain: on-device Gemma 4 + cloud Claude, routing tiers, offline behavior. |
 | `06-VOICE.md` | Voice layer: building on Sesame CSM (self-/managed-GPU), voice-identity locking, fallback. |
 | `07-IDENTITY-AND-METHOD.md` | **The soul of the product:** core identity, values, the evidence base behind every method, and the personalized→shareable framework engine. Read when tuning persona, prompts, or the intelligence layer. |
-| `08-UX-AGENT-EXPERIENCE-PLAN.md` | The UX & agent-experience roadmap (July 2026): current-state assessment of the live app, what "premier personalized agent" means, proactive engagement, Urge/Trigger/Resist/Decision taxonomy, gamification (personal records, not streaks), Journey dashboard, and the 30/90-day sequencing. |
+| `08-UX-AGENT-EXPERIENCE-PLAN.md` | The UX & agent-experience roadmap (July 2026): current-state assessment of the live app, what "premier personalized agent" means, proactive engagement, Urge/Trigger/Resist/Decision taxonomy, gamification (personal records, not streaks), Journey dashboard, privacy/trust/data-ownership commitments, and the 30/90-day sequencing. |
 
 ## The one-paragraph summary
 

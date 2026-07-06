@@ -13,7 +13,7 @@ BattleBuddy has crossed the hardest threshold: the voice loop works, the memory 
 
 But BB today is a **reactive** companion with **good memory and no initiative**. It never reaches out. Its event vocabulary is too coarse to capture how quitting actually works (urges without outcomes, conscious decisions vs. slips, triggers as first-class data). The user can't see their own journey. And a few reliability gaps (text-session extraction, duplicate messages) still occasionally break the illusion of being known — and every break costs trust that took weeks to build.
 
-This plan defines what "premier personalized AI experience" means concretely, and sequences the work: **trust reliability → richer event language → proactive engagement (the moat) → visible journey → biometrics and beyond.**
+This plan defines what "premier personalized AI experience" means concretely, and sequences the work: **trust reliability → richer event language → proactive engagement (the moat) → visible journey → biometrics and beyond** — with privacy hardening (§6) woven through the first 90 days, because the same conversations that make BB valuable are some of the most personal words a user will ever say to software.
 
 ---
 
@@ -147,7 +147,7 @@ The quick-log menu on the mascot (Resisted / Gave In) extends to the full taxono
 | Register | Short. If BB talks >10 seconds, it's talking too much. One question max. | Slightly fuller; markdown, images, videos, content cards allowed |
 | Content | Quotes/insights spoken only | Full media |
 | Latency | First token <1s — this is the product | Streaming SSE, same budget |
-| Ending | Users hang up abruptly; that's fine | Sessions trail off; server finalizes (§6) |
+| Ending | Users hang up abruptly; that's fine | Sessions trail off; server finalizes (§7) |
 
 The craving moment is where BB earns its existence — when someone is about to light up, they need something to *do* in the next 10 seconds, not a conversation opener. Voice is that channel. Both modes share one brain, one memory, one session (the switch-mode flow already carries the last 10 messages across).
 
@@ -187,7 +187,7 @@ The craving moment is where BB earns its existence — when someone is about to 
 
 **2. Competence Milestones (self-knowledge, from the operations contract — these are the real trophies):**
 - "You've mapped your top trigger" · "Three coping moves that work for *you*" · "Ten evening urges ridden out" · "First urge handled with no session at all" (independence) · **"30 days of honest logging"** — honesty *including disclosed slips* is the achievement
-- Auto-detected by the extraction/batch layer (milestone detection is currently unwired — §6), logged as `milestone` events, so BB and the dashboard share one source of truth
+- Auto-detected by the extraction/batch layer (milestone detection is currently unwired — §7), logged as `milestone` events, so BB and the dashboard share one source of truth
 
 **3. Journey Milestones (arc markers):** first week below baseline, halved daily count, first full patch-off evening without a cigarette, one month of showing up.
 
@@ -231,7 +231,67 @@ Classic quit-app stats (money saved, cigarettes avoided) — available, not lead
 
 ---
 
-## 6. Prioritized Implementation Plan
+## 6. Privacy, Trust & Data Ownership
+
+### Principle — two promises with equal weight
+
+BattleBuddy's transcripts are addiction conversations: 2am cravings, slips a user hasn't told their family about, the reasons they started at age nine. That data is health-adjacent and deeply personal, and it is also *the product* — memory is what makes BB a companion. So the privacy stance is two promises, made in the same breath:
+
+1. **"You can always see everything BB knows about you."** Reviewing your own transcripts and profile isn't a compliance checkbox — it's part of feeling heard. Rereading the conversation that got you through a Tuesday evening is product value.
+2. **"No one else ever can."** Not other users, not advertisers, not data brokers, not a stranger with a URL. Protection has to be real at the engineering level, not just promised in a policy.
+
+Trust is the moat's foundation: a user who doesn't fully trust BB with the 2am version of themselves will never generate the honest data the whole system runs on.
+
+### Honest inventory — where the data lives and how it's protected today
+
+| Data | Where it lives | Protection today | Target |
+|---|---|---|---|
+| Raw session transcripts (voice + text) | JSON files on the Railway volume (`context-store/session-transcripts/`) | TLS in transit; **plaintext at rest; read endpoint unauthenticated** | Encrypted at rest; authenticated, per-user access only |
+| Profile JSON (facts, quotes, schedule model) | Railway volume (`context-store/{userId}.json`) | Same — **and the `PUT /context/profile/` write endpoint is also unauthenticated** | Same as transcripts |
+| Event log, memories, insights | Supabase (`bb_events`, `user_memories`) | RLS designed, but effectively bypassed: no real user auth yet, so all reads flow through server endpoints with the service-role key | Real Supabase Auth so RLS does its job; server endpoints scoped per user |
+| Voice audio | LiveKit (transport) + Deepgram (STT/TTS processing) | Not stored by us | Keep it that way — commit publicly: **we never retain audio recordings** |
+| Push tokens, engagement stats | Supabase | Standard | Standard |
+| Processors (must be named in the policy) | Anthropic (Claude API — does not train on API data), Deepgram, LiveKit, Supabase, Railway, Expo (push), Cloudflare R2 (content only, no user data) | Contracts/ToS | DPA review before scale |
+
+### The gap to close first (blunt, verified July 2026)
+
+`GET /context/transcripts/{userId}`, `GET/PUT /context/profile/{userId}`, and the `/admin/*` endpoints on bb-server have **no authentication**. Anyone who knows the Railway URL and a user ID (which are guessable timestamps) can read every transcript, read or **overwrite** a profile, or trigger admin jobs. Acceptable risk at n=1 with an obscure URL; a disqualifying breach vector for user #2. This is a Week 1 fix (§7): a server shared-secret/bearer token immediately, replaced by per-user tokens once real Supabase Auth lands. Real auth — already on the 90-day plan for multi-user — is equally a *privacy* feature: it's what lets RLS actually protect rows.
+
+Two more honest items the policy must reflect, not hide:
+- **Internal AI review exists.** The nightly transcript audit and the agent design loop read session data to catch failures and improve BB. Disclose it plainly ("BB's own quality checks review sessions to make BB better — no human reads your conversations as entertainment, and no data leaves our systems for it"), and offer an opt-out once multi-user.
+- **Extraction derivatives.** Deleting a transcript deletes the raw record, but facts already extracted into the profile survive it. Honest deletion means: per-session delete also strips derived memories referencing it, and a full profile re-extraction (without the deleted session) is the guarantee path.
+
+### User controls — the UX of data ownership
+
+1. **See it.** Session cards in `history.tsx` open the **full transcript** (voice sessions included — "what BB heard"). A new **"What BB knows about me"** view renders the profile in human terms: facts, patterns, the schedule model, saved quotes — each with where it came from. This doubles as the memory-trust feature: users test BB's memory anyway (§1); let them see it.
+2. **Correct or forget it.** Conversationally first — "that's wrong" already overwrites (persona rule), and "forget that" becomes a supported command. Plus per-fact remove in the profile view and per-session transcript delete (with derivative stripping as above). No argument, no friction, no "are you sure?" guilt trip.
+3. **Export it.** One tap in `preferences.tsx` (placeholder exists) → complete readable archive: transcripts, profile, events, insights. Your quit journey is yours to take with you — including to a doctor or a human sponsor.
+4. **Delete everything.** In-app account deletion with a full, tested cascade: profile JSON, transcripts, `bb_events`, `user_memories`, vector entries, push tokens. Immediate on request; backup copies purged within a stated window (e.g. 30 days), and that window is disclosed. No retention "for our records," no win-back dark patterns — success was always the user needing BB less.
+
+### What the Privacy Policy & Terms must commit to — in BB's voice, not legalese
+
+Draft the policy the way BB talks: short sentences, first person, no hedging. A lawyer tightens it *after* the human version is right. The commitments:
+
+- **Your conversations belong to you.** We store them for one reason: so BB can remember you. That's the product you're using.
+- **We will never sell your data.** No ads, no ad SDKs, no data brokers, no "partners." Ever.
+- **Conversation content never leaves the conversation.** Product analytics sees de-identified events only ("a session happened"), never words. (Already an engineering rule — make it a public promise.)
+- **Who can see your data:** you; BB's own systems; and the named processors that make BB work (Anthropic, Deepgram, LiveKit, Supabase, Railway, Expo — listed with what each does). Anthropic does not train models on your conversations. Founders and engineers do not browse user conversations; debugging access requires your consent, and automated quality review is disclosed above.
+- **We never keep audio.** Voice is transcribed in the moment; recordings aren't stored.
+- **Retention:** we keep your data while your account is active, because memory is the service. Delete any of it, or all of it, anytime; backups purge within the stated window.
+- **Security:** encrypted in transit everywhere, encrypted at rest (with an honest date for when that's true), access-controlled endpoints, keys never on the device.
+- **If we're breached, we tell you** — promptly, plainly, and with what it means for you.
+- **Honest scope:** we're not a medical provider and not HIPAA-covered — we protect your data *as if* it were covered anyway, and we never claim compliance we don't have. 18+, US-only for now.
+- **If this policy changes, we tell you in plain language** — never a silent update.
+
+**Gate:** the policy/terms and the endpoint lockdown ship **before the second real user** (Alec). Nobody pours their addiction story into an app on a promise we haven't written down yet.
+
+### Longer arc — local-first
+
+The architecture contract's end state remains the goal: personally identifiable history lives **on-device**, the cloud holds encrypted, anonymized derivatives for recall and backup. That inverts today's layout (everything on a server volume) and is post-90-day work — but every near-term decision (encryption at rest, per-user tokens, export format) should be a step toward it, not away from it.
+
+---
+
+## 7. Prioritized Implementation Plan
 
 ### Sequencing logic
 
@@ -244,31 +304,32 @@ Trust before initiative (a companion that reaches out but misremembers is worse 
 2. Squash the open regression catalog: duplicate consecutive BB messages, wrong-greeting guard, breathing-protocol misfire guard ("not trying to resist" → listen).
 3. **Verify push-token registration end-to-end** on build 38+ (the single gate on all proactive work). Wire quiet-hours preference from `routines.tsx` to the backend scheduler.
 4. Session-accounting regression tests (double-count and ghost-session bugs stay dead).
+5. **Lock down bb-server data endpoints** (§6): shared-secret bearer auth on `/context/*` and `/admin/*` (app + voice agent send it; everything else gets 401). Closes the read-anyone's-transcript / overwrite-anyone's-profile hole before any other user exists.
 
 **Week 2 — Taxonomy v2 (teach BB the language of quitting)**
-5. `bb_events`: add `urge` + `decision` types, structured `trigger` metadata, `source` field incl. `retroactive` (SQL via Supabase dashboard — Mike pastes; no DB password on dev machines).
-6. Update tools (`log_event`, `update_event`, `get_usage_stats`) + voice-agent mirrors + system prompt: conversation-first logging rules, decision-vs-slip distinction, back-dating flow, silent mid-conversation logging.
-7. Extend quick-log menu on the mascot to the full taxonomy.
-8. Extraction (`contextAgent.js`): attach trigger metadata to mirrored events; begin populating the **schedule model** (routine blocks + vulnerability windows with reasons and provenance) in the profile schema.
+6. `bb_events`: add `urge` + `decision` types, structured `trigger` metadata, `source` field incl. `retroactive` (SQL via Supabase dashboard — Mike pastes; no DB password on dev machines).
+7. Update tools (`log_event`, `update_event`, `get_usage_stats`) + voice-agent mirrors + system prompt: conversation-first logging rules, decision-vs-slip distinction, back-dating flow, silent mid-conversation logging.
+8. Extend quick-log menu on the mascot to the full taxonomy.
+9. Extraction (`contextAgent.js`): attach trigger metadata to mirrored events; begin populating the **schedule model** (routine blocks + vulnerability windows with reasons and provenance) in the profile schema.
 
 **Weeks 3–4 — Proactive v1 (the moat, Stage A)**
-9. Activate the risk-window sweep end-to-end: schedule model → engagement-window logic (server-side port of `engagementEngine.ts` semantics; single system-wide window config) → recognition-style nudge composed from the context-assembly bundle → push → deep link into chat/voice with trigger context pre-set.
-10. Log `SELF_INITIATED` vs `PROMPTED` engagement as distinct events (feeds the independence trend later).
-11. Context-assembly upgrades: last-event awareness + risk-window status + journey phase line injected per turn.
-12. **Records v1:** records computation in `batchProfiler.js` (replacing streak logic), rework `goals.tsx` into the records wall, conversational surfacing rules in the prompt.
+10. Activate the risk-window sweep end-to-end: schedule model → engagement-window logic (server-side port of `engagementEngine.ts` semantics; single system-wide window config) → recognition-style nudge composed from the context-assembly bundle → push → deep link into chat/voice with trigger context pre-set.
+11. Log `SELF_INITIATED` vs `PROMPTED` engagement as distinct events (feeds the independence trend later).
+12. Context-assembly upgrades: last-event awareness + risk-window status + journey phase line injected per turn.
+13. **Records v1:** records computation in `batchProfiler.js` (replacing streak logic), rework `goals.tsx` into the records wall, conversational surfacing rules in the prompt.
 
-**30-day exit test:** Mike receives at least one nudge that references his actual pattern at the right moment, taps it, and lands in a conversation that continues the thought. A text session with no explicit close still produces a report. "I decided to have one last night" gets logged as a back-dated `decision` with zero friction.
+**30-day exit test:** Mike receives at least one nudge that references his actual pattern at the right moment, taps it, and lands in a conversation that continues the thought. A text session with no explicit close still produces a report. "I decided to have one last night" gets logged as a back-dated `decision` with zero friction. And an unauthenticated request to `/context/transcripts/*` returns 401.
 
 ### 90-Day Plan
 
 - **Journey dashboard v2:** Arc chart, Hours heatmap, What-Works ranking, independence trend, BB-voiced insight cards + `/stats/*` endpoints. Insight-synthesis batch job with precision thresholds (time-of-day clustering, pre-lapse sequences, coping efficacy, cross-attempt comparison).
 - **Auto-milestone detection** wired (extraction + batch → `milestone` events → conversational celebration + wall).
 - **Emotional responsiveness:** conversational intensity capture (start→end delta), empathy-state polish, chat-screen entity presence (open design item).
-- **Real Supabase auth** (magic link + Apple Sign-In) → migrate off `user-{timestamp}` IDs → **invite Alec** (the second real user, and the vaping test of the taxonomy).
+- **Real Supabase auth** (magic link + Apple Sign-In) → migrate off `user-{timestamp}` IDs → per-user endpoint tokens replace the shared secret, RLS becomes real → **invite Alec** (the second real user, and the vaping test of the taxonomy). Gated on §6: policy/terms published and lockdown verified first.
 - **Proactive Stage B:** event-informed outreach (unresolved urges, unusual gaps, morning-after check-ins, milestone moments). RELAPSE_TRACKING state honored: sustained non-resisting phase → lower frequency, warm presence, next-attempt intelligence.
 - **Content system growth:** more videos through the n8n pipeline; `suggest_media` tool so BB can pull the right item at the right moment (mode-aware: voice = spoken quotes only); "Helped?" engagement persisted to `user_media_stats` to close the personalization loop.
 - **HealthKit ingestion v1 (Stage C start):** device stream → server baselines → anomaly classification into the same engagement-window machine. Sub-second, no LLM in the detection path.
-- **Privacy debt:** transcripts currently sit plaintext on the Railway volume; encrypt at rest and revisit the local-first model (personal history on device, anonymized derivatives in cloud) per the architecture contract. Export-my-data endpoint (UI placeholder exists).
+- **Privacy & data ownership build-out (§6):** encryption at rest for the context store; in-app transcript viewer (session card → full transcript) and "What BB knows about me" profile view; export-my-data endpoint + UI (placeholder exists); tested delete cascade (per-session with derivative stripping, and full account); Privacy Policy + Terms written in BB's voice, lawyer-tightened after. All of this lands **before Alec**.
 
 ### Beyond 90 days
 
@@ -281,6 +342,7 @@ BB Network (opted-in cohort wisdom surfaced at the right moment — peer insight
 - Text sessions with reports: 100%. Wrong-memory incidents per week: 0.
 - Honest logging persists after slips (disclosure rate doesn't drop post-slip — the shame-free design working).
 - Independence ratio (self-initiated : prompted) rises month over month — success is needing the app less.
+- A stranger with the server URL can read nothing; a user can see, export, and delete everything (§6's two promises, both verifiable).
 
 ### Constraints honored throughout
 
