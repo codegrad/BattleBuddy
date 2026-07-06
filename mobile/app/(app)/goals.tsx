@@ -69,7 +69,7 @@ export default function GoalsScreen() {
               <View style={styles.milestoneInfo}>
                 <Text style={[styles.milestoneLabel, !reached && styles.milestoneDim]}>{label}</Text>
                 <Text style={[styles.milestoneCount, !reached && styles.milestoneDim]}>
-                  {count} resists
+                  {count} {count === 1 ? 'resist' : 'resists'}
                 </Text>
               </View>
               {reached && <Ionicons name="checkmark" size={18} color={Colors.success} />}
