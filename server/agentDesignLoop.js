@@ -53,7 +53,9 @@ const REMOTE_BASE_URL = process.env.BB_SERVER_URL || 'https://bb-server-producti
 // ── Load all user profiles ────────────────────────────────────────────────────
 
 async function fetchRemoteProfile(userId) {
-  const res = await fetch(`${REMOTE_BASE_URL}/context/profile/${userId}`);
+  const res = await fetch(`${REMOTE_BASE_URL}/context/profile/${userId}`, {
+    headers: { 'x-bb-admin-secret': process.env.BB_ADMIN_SECRET || '' },
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${userId}`);
   const data = await res.json();
   return data.profile || data;
@@ -221,7 +223,13 @@ async function applyProposalsToSystemPrompt(proposalText, currentSystemPrompt) {
   const estimatedInputTokens = Math.ceil(currentSystemPrompt.length / 4);
   const maxTokens = Math.min(16384, Math.max(8192, estimatedInputTokens + 4096));
 
-  const response = await client.messages.create({
+  // Streamed rather than a plain create(): a non-streaming call generating
+  // up to 16384 tokens sits idle waiting for the full response, and hit
+  // APIConnectionTimeoutError three times in a row on 2026-07-07 even with
+  // the client timeout raised to 20 minutes — the connection was being
+  // dropped somewhere in the network path well before that, not by the SDK
+  // itself. Streaming keeps bytes flowing so nothing treats it as idle.
+  const stream = client.messages.stream({
     model: 'claude-sonnet-4-6',
     max_tokens: maxTokens,
     system: `You are applying approved changes to a live AI system prompt. You will receive:
@@ -249,6 +257,7 @@ ${currentSystemPrompt}
 Return the complete updated system prompt with all HIGH confidence proposals applied.`,
     }],
   });
+  const response = await stream.finalMessage();
 
   const text = response.content[0].text;
 
