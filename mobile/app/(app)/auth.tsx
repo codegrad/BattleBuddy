@@ -24,6 +24,7 @@ export default function AuthScreen() {
 
   const signIn = useAuthStore((s) => s.signIn);
   const signUp = useAuthStore((s) => s.signUp);
+  const pendingConfirmation = useAuthStore((s) => s.pendingConfirmation);
 
   const handleSubmit = useCallback(async () => {
     setError(null);
@@ -38,6 +39,29 @@ export default function AuthScreen() {
   const canSubmit = mode === 'signup'
     ? name.trim().length > 0 && email.trim().length > 0 && password.length >= 6
     : email.trim().length > 0 && password.length >= 6;
+
+  if (pendingConfirmation) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.content}>
+          <View style={styles.mascotArea}>
+            <BBMascot state="idle" size={140} showRing={false} />
+          </View>
+          <Text style={styles.title}>Check your email</Text>
+          <Text style={styles.subtitle}>
+            We sent a confirmation link to {pendingConfirmation}. Tap it, then come back and sign in below.
+          </Text>
+          <TouchableOpacity
+            style={styles.button}
+            onPress={() => { setMode('signin'); setPassword(''); useAuthStore.setState({ pendingConfirmation: null }); }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.buttonText}>Sign in</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>

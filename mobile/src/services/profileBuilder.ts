@@ -49,8 +49,12 @@ export async function fetchUserProfile(userIdArg: string | null): Promise<UserPr
 
   if (userId) {
     try {
+      const { getAuthToken } = await import('./supabase');
+      const token = await getAuthToken();
       const [profileRes, eventsRes] = await Promise.all([
-        fetch(`${ApiConfig.CHAT_URL}/context/profile/${encodeURIComponent(userId)}`),
+        fetch(`${ApiConfig.CHAT_URL}/context/profile/${encodeURIComponent(userId)}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        }),
         fetch(`${ApiConfig.CHAT_URL}/events?userId=${encodeURIComponent(userId)}&eventTypes=session&limit=100`),
       ]);
 

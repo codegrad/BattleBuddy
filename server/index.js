@@ -10,6 +10,7 @@ import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { timingSafeEqual } from 'node:crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import WebSocket from 'ws';
@@ -669,8 +670,48 @@ async function executeToolUse(toolUse, userId, timezone = DEFAULT_TZ) {
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, GET, PUT, OPTIONS',
-  'Access-Control-Allow-Headers': 'content-type',
+  'Access-Control-Allow-Headers': 'content-type, authorization, x-bb-admin-secret',
 };
+
+// ─── Auth guards ─────────────────────────────────────────────────────────────
+// Two credential types protect sensitive routes:
+//  - x-bb-admin-secret: a shared server secret for internal/admin tooling
+//    (admin.html, migration scripts) — full trust, no per-user ownership check.
+//  - Authorization: Bearer <supabase JWT>: a real end-user session — verified
+//    against Supabase's auth server, then matched to the userId in the path.
+function checkAdminSecret(req) {
+  const provided = req.headers['x-bb-admin-secret'];
+  const expected = process.env.BB_ADMIN_SECRET;
+  if (!provided || !expected) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+function send401(res, status, error) {
+  res.writeHead(status, { ...CORS, 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error }));
+}
+
+/** Authorizes access to a per-user route. Admin secret grants full trust;
+ * otherwise a valid Supabase JWT must belong to the same user as pathUserId. */
+async function authorizeProfileAccess(req, pathUserId) {
+  if (checkAdminSecret(req)) return { ok: true, mode: 'admin' };
+
+  const authHeader = req.headers['authorization'] || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return { ok: false, status: 401, error: 'Missing credentials' };
+
+  if (!supabase) return { ok: false, status: 401, error: 'Auth not configured' };
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data?.user) return { ok: false, status: 401, error: 'Invalid token' };
+
+  if (resolveUserId(data.user.id) !== resolveUserId(pathUserId)) {
+    return { ok: false, status: 403, error: 'Forbidden' };
+  }
+  return { ok: true, mode: 'user', userId: data.user.id };
+}
 
 // Streams one agent turn to the client over SSE. When the model calls a tool
 // (e.g. get_usage_stats), the loop executes it, feeds the result back, and
@@ -1394,6 +1435,7 @@ Return ONLY the JSON object, no markdown, no explanation.`;
   // GET /context/transcripts/{userId}            → index of sessions
   // GET /context/transcripts/{userId}/{sessionId} → full transcript
   if (req.method === 'GET' && req.url.startsWith('/context/transcripts/')) {
+    if (!checkAdminSecret(req)) return send401(res, 401, 'Unauthorized');
     try {
       const parts = req.url.split('/context/transcripts/')[1].split('/').map(decodeURIComponent);
       const userId = resolveUserId(parts[0] || 'default');
@@ -1425,13 +1467,37 @@ Return ONLY the JSON object, no markdown, no explanation.`;
   }
 
   // Get the context agent's profile for a user
-  if (req.method === 'GET' && req.url.startsWith('/context/profile/')) {
+  if (req.method === 'GET' && req.url.startsWith('/context/profile/') && !req.url.includes('/voice')) {
     const userId = req.url.split('/context/profile/')[1];
+    const auth = await authorizeProfileAccess(req, userId);
+    if (!auth.ok) return send401(res, auth.status, auth.error);
     const summary = buildProfileSummary(userId);
     const profile = loadProfile(userId);
     const lifeArchitecture = buildLifeArchitectureSummary(userId);
     res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ summary, profile, lifeArchitecture }));
+  }
+
+  // Set the user's TTS voice preference (mobile-facing narrow write — mirrors
+  // the read-modify-write shape of /context/session-outcome rather than the
+  // full-object replace of PUT /context/profile/:userId).
+  if (req.method === 'POST' && req.url.match(/^\/context\/profile\/[^/]+\/voice$/)) {
+    const userId = decodeURIComponent(req.url.split('/context/profile/')[1].split('/voice')[0]);
+    const auth = await authorizeProfileAccess(req, userId);
+    if (!auth.ok) return send401(res, auth.status, auth.error);
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    try {
+      const { voice } = JSON.parse(body);
+      const profile = loadProfile(userId);
+      profile.voice_preference = voice;
+      persistProfile(userId);
+      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, voice }));
+    } catch (err) {
+      res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: err.message }));
+    }
   }
 
   // Trigger a context analysis (called by the app on session end or mid-session)
@@ -1665,6 +1731,7 @@ Return ONLY the JSON object, no markdown, no explanation.`;
   // rows in bb_events (opened and abandoned within 10s, no outcome). The
   // nightly audit flagged 80+ of these polluting the record.
   if (req.method === 'POST' && req.url === '/admin/cleanup') {
+    if (!checkAdminSecret(req)) return send401(res, 401, 'Unauthorized');
     try {
       const result = { transcripts_deleted: 0, ghost_sessions_deleted: 0 };
       const storeDir = process.env.CONTEXT_STORE_DIR || resolve(__dirname, 'context-store');
@@ -1718,6 +1785,7 @@ Return ONLY the JSON object, no markdown, no explanation.`;
   // Memory consolidation on demand. {"userId": "...", "all": true} backfills
   // the user's full transcript history in batches of 10 sessions.
   if (req.method === 'POST' && req.url === '/admin/consolidate') {
+    if (!checkAdminSecret(req)) return send401(res, 401, 'Unauthorized');
     let body = '';
     for await (const chunk of req) body += chunk;
     try {
@@ -1742,6 +1810,7 @@ Return ONLY the JSON object, no markdown, no explanation.`;
 
   // Trigger a transcript audit on demand
   if (req.method === 'POST' && req.url === '/admin/audit/run') {
+    if (!checkAdminSecret(req)) return send401(res, 401, 'Unauthorized');
     try {
       const result = await runTranscriptAudit();
       res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
@@ -1753,40 +1822,19 @@ Return ONLY the JSON object, no markdown, no explanation.`;
   }
 
   // ─── Admin panel ────────────────────────────────────────────────────────────
+  // The shell itself carries no data — a plain browser navigation can't attach
+  // custom headers, so gating this route would make the page unloadable before
+  // its JS ever runs to prompt for the secret. Every route the page actually
+  // calls (cleanup/consolidate/audit/profile/voice) is independently guarded.
   if (req.method === 'GET' && req.url === '/admin') {
     const html = readFileSync(resolve(__dirname, 'admin.html'), 'utf-8');
     res.writeHead(200, { 'Content-Type': 'text/html' });
     return res.end(html);
   }
 
-  if (req.method === 'GET' && req.url === '/admin/voice') {
-    try {
-      const config = JSON.parse(readFileSync(resolve(__dirname, 'voice-config.json'), 'utf-8'));
-      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify(config));
-    } catch {
-      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ voice: 'aura-2-arcas-en' }));
-    }
-  }
-
-  if (req.method === 'POST' && req.url === '/admin/voice') {
-    let body = '';
-    for await (const chunk of req) body += chunk;
-    try {
-      const { voice } = JSON.parse(body);
-      writeFileSync(resolve(__dirname, 'voice-config.json'), JSON.stringify({ voice }));
-      console.log(`Voice changed to: ${voice}`);
-      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ ok: true, voice }));
-    } catch (err) {
-      res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: err.message }));
-    }
-  }
-
   // ─── Profile upload endpoint (admin tool) ──────────────────────────────────
   if (req.method === 'PUT' && req.url.startsWith('/context/profile/')) {
+    if (!checkAdminSecret(req)) return send401(res, 401, 'Unauthorized');
     const userId = req.url.split('/context/profile/')[1];
     let body = '';
     for await (const chunk of req) body += chunk;

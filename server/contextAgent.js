@@ -42,6 +42,16 @@ const client = new Anthropic();
 
 const STORE_DIR = process.env.CONTEXT_STORE_DIR || resolve(__dirname, 'context-store');
 
+/** One-time seed value for voice_preference — the old global voice-config.json,
+ * kept on disk but no longer written to once every profile has its own field. */
+function readDefaultVoicePreference() {
+  try {
+    return JSON.parse(readFileSync(resolve(__dirname, 'voice-config.json'), 'utf-8')).voice || 'aura-2-arcas-en';
+  } catch {
+    return 'aura-2-arcas-en';
+  }
+}
+
 const profiles = {};
 
 const TIMESTAMPED_ARRAYS = [
@@ -63,7 +73,10 @@ const LIFE_ARCH_ARRAYS = [
 
 const SCHEDULE_MODEL_ARRAYS = ['routine_blocks', 'vulnerability_windows', 'life_change_watch'];
 
-// Map of user ID aliases — redirects old IDs to the canonical one
+// Map of user ID aliases — redirects old IDs to the canonical one.
+// Once real Supabase Auth ships, add the new auth UID here (e.g. after signing
+// up with the same email as the old local account) so the existing profile
+// keeps resolving instead of starting fresh under an unrelated UUID.
 export const USER_ALIASES = {
   'default': 'user-1782351957094',
   'user-1782249813276': 'user-1782351957094',
@@ -152,6 +165,7 @@ function safeJsonParse(text) {
  * Idempotent — safe to call on already-migrated profiles.
  */
 function migrateProfile(profile) {
+  if (!profile.voice_preference) profile.voice_preference = readDefaultVoicePreference();
   for (const field of TIMESTAMPED_ARRAYS) {
     if (!Array.isArray(profile[field])) continue;
     profile[field] = profile[field].map(item => {
@@ -433,6 +447,7 @@ export function loadProfile(rawUserId) {
     preferred_coping_style: null,
     response_preference: null,
     emotional_patterns: null,
+    voice_preference: readDefaultVoicePreference(),
     session_count: 0,
     last_updated: null,
     last_session_at: null,

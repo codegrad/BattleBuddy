@@ -14,3 +14,10 @@ export const supabase = createClient(
     },
   },
 );
+
+/** Current session's access token, for attaching `Authorization: Bearer <token>`
+ * to server calls that verify the user's identity. Null when signed out. */
+export async function getAuthToken(): Promise<string | null> {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token ?? null;
+}

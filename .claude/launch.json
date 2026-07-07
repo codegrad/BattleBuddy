@@ -6,6 +6,13 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "4173", "--directory", "design/mockups"],
       "port": 4173
+    },
+    {
+      "name": "bb-server",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["index.js"],
+      "port": 3333,
+      "cwd": "server"
     }
   ]
 }

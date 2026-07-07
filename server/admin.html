@@ -46,12 +46,15 @@ const VOICES = [
 ];
 
 let activeVoice = '';
+const adminSecret = window.prompt('Admin secret') || '';
+const authHeaders = { 'x-bb-admin-secret': adminSecret };
 
 async function loadCurrent() {
   try {
-    const res = await fetch('/admin/voice');
+    const res = await fetch('/context/profile/default', { headers: authHeaders });
+    if (!res.ok) throw new Error('unauthorized');
     const data = await res.json();
-    activeVoice = data.voice;
+    activeVoice = data.profile.voice_preference;
     document.getElementById('current-voice').textContent = 'Current: ' + (VOICES.find(v => v.id === activeVoice)?.name || activeVoice);
     render();
   } catch {
@@ -75,9 +78,9 @@ function render() {
 async function selectVoice(id) {
   const status = document.getElementById('status');
   try {
-    const res = await fetch('/admin/voice', {
+    const res = await fetch('/context/profile/default/voice', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
       body: JSON.stringify({ voice: id }),
     });
     const data = await res.json();

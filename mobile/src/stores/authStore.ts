@@ -1,8 +1,6 @@
 import { create } from 'zustand';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-const STORAGE_KEY = 'bb_accounts';
-const SESSION_KEY = 'bb_current_user';
+import type { Session } from '@supabase/supabase-js';
+import { supabase } from '../services/supabase';
 
 export interface LocalUser {
   id: string;
@@ -14,103 +12,98 @@ export interface LocalUser {
 interface AuthState {
   user: LocalUser | null;
   loading: boolean;
+  // Set to the email just signed up with when Supabase requires email
+  // confirmation before a session exists (project has mailer_autoconfirm off).
+  // Cleared on a successful sign-in.
+  pendingConfirmation: string | null;
   initialize: () => Promise<void>;
   signUp: (name: string, email: string, password: string) => Promise<string | null>;
   signIn: (email: string, password: string) => Promise<string | null>;
   signOut: () => Promise<void>;
 }
 
-async function getAccounts(): Promise<Record<string, { user: LocalUser; passwordHash: string }>> {
-  const raw = await AsyncStorage.getItem(STORAGE_KEY);
-  return raw ? JSON.parse(raw) : {};
+function toLocalUser(session: Session | null): LocalUser | null {
+  if (!session?.user) return null;
+  return {
+    id: session.user.id,
+    name: session.user.user_metadata?.name ?? '',
+    email: session.user.email ?? '',
+    createdAt: session.user.created_at ? new Date(session.user.created_at).getTime() : Date.now(),
+  };
 }
 
-async function saveAccounts(accounts: Record<string, { user: LocalUser; passwordHash: string }>): Promise<void> {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(accounts));
+async function seedProfile(userId: string, name: string): Promise<void> {
+  const { ApiConfig } = await import('../config');
+  fetch(`${ApiConfig.CHAT_URL}/context/seed`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, name }),
+  }).catch(() => {});
 }
 
-function simpleHash(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0;
-  }
-  return String(hash);
-}
+export const useAuthStore = create<AuthState>((set) => {
+  // Keeps the store in sync with token refreshes and sign-outs triggered
+  // elsewhere (e.g. a refresh token rejected by the server).
+  supabase.auth.onAuthStateChange((_event, session) => {
+    set({ user: toLocalUser(session), loading: false });
+  });
 
-export const useAuthStore = create<AuthState>((set) => ({
-  user: null,
-  loading: true,
+  return {
+    user: null,
+    loading: true,
+    pendingConfirmation: null,
 
-  initialize: async () => {
-    try {
-      const userId = await AsyncStorage.getItem(SESSION_KEY);
-      if (userId) {
-        const accounts = await getAccounts();
-        const account = accounts[userId];
-        if (account) {
-          set({ user: account.user, loading: false });
-          return;
-        }
+    initialize: async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        set({ user: toLocalUser(data.session), loading: false });
+      } catch {
+        set({ loading: false });
       }
-      set({ loading: false });
-    } catch {
-      set({ loading: false });
-    }
-  },
+    },
 
-  signUp: async (name, email, password) => {
-    const trimmedEmail = email.trim().toLowerCase();
-    if (!trimmedEmail || !password || password.length < 6) {
-      return 'Email and password (6+ characters) required';
-    }
-    if (!name.trim()) return 'Name is required';
+    signUp: async (name, email, password) => {
+      const trimmedEmail = email.trim().toLowerCase();
+      if (!trimmedEmail || !password || password.length < 6) {
+        return 'Email and password (6+ characters) required';
+      }
+      if (!name.trim()) return 'Name is required';
 
-    const accounts = await getAccounts();
+      const { data, error } = await supabase.auth.signUp({
+        email: trimmedEmail,
+        password,
+        options: { data: { name: name.trim() } },
+      });
+      if (error) return error.message;
+      if (!data.user) return 'Sign up failed — please try again';
 
-    if (accounts[trimmedEmail]) {
-      return 'An account with this email already exists';
-    }
+      // The auth user id exists immediately, even before email confirmation.
+      seedProfile(data.user.id, name.trim());
 
-    const user: LocalUser = {
-      id: `user-${Date.now()}`,
-      name: name.trim(),
-      email: trimmedEmail,
-      createdAt: Date.now(),
-    };
+      if (!data.session) {
+        // Email confirmation required — no session yet.
+        set({ pendingConfirmation: trimmedEmail });
+        return null;
+      }
 
-    accounts[trimmedEmail] = { user, passwordHash: simpleHash(password) };
-    await saveAccounts(accounts);
-    await AsyncStorage.setItem(SESSION_KEY, trimmedEmail);
-    set({ user });
+      set({ user: toLocalUser(data.session), pendingConfirmation: null });
+      return null;
+    },
 
-    // Seed the context agent with the user's name
-    const { ApiConfig } = await import('../config');
-    fetch(`${ApiConfig.CHAT_URL}/context/seed`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: user.id, name: user.name }),
-    }).catch(() => {});
+    signIn: async (email, password) => {
+      const trimmedEmail = email.trim().toLowerCase();
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: trimmedEmail,
+        password,
+      });
+      if (error) return error.message;
+      set({ user: toLocalUser(data.session), pendingConfirmation: null });
+      return null;
+    },
 
-    return null;
-  },
-
-  signIn: async (email, password) => {
-    const trimmedEmail = email.trim().toLowerCase();
-    const accounts = await getAccounts();
-    const account = accounts[trimmedEmail];
-
-    if (!account) return 'No account found with this email';
-    if (account.passwordHash !== simpleHash(password)) return 'Incorrect password';
-
-    await AsyncStorage.setItem(SESSION_KEY, trimmedEmail);
-    set({ user: account.user });
-    return null;
-  },
-
-  signOut: async () => {
-    await AsyncStorage.removeItem(SESSION_KEY);
-    set({ user: null });
-  },
-}));
+    signOut: async () => {
+      await supabase.auth.signOut();
+      set({ user: null });
+    },
+  };
+});

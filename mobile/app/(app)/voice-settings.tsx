@@ -4,6 +4,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ApiConfig } from '../../src/config';
 import { Colors, Spacing, Radii } from '../../src/theme';
+import { useAuthStore } from '../../src/stores/authStore';
+import { getAuthToken } from '../../src/services/supabase';
 
 const VOICES = [
   { id: 'aura-2-arcas-en', name: 'Arcas', style: 'Calm male' },
@@ -18,24 +20,43 @@ const VOICES = [
 ];
 
 export default function VoiceSettingsScreen() {
+  const userId = useAuthStore((s) => s.user?.id);
   const [currentVoice, setCurrentVoice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${ApiConfig.CHAT_URL}/admin/voice`)
-      .then((r) => r.json())
-      .then((data) => setCurrentVoice(data.voice))
-      .catch(() => setCurrentVoice('aura-2-arcas-en'))
-      .finally(() => setLoading(false));
-  }, []);
+    if (!userId) {
+      setLoading(false);
+      return;
+    }
+    (async () => {
+      try {
+        const token = await getAuthToken();
+        const res = await fetch(`${ApiConfig.CHAT_URL}/context/profile/${encodeURIComponent(userId)}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        const data = await res.json();
+        setCurrentVoice(data.profile?.voice_preference ?? 'aura-2-arcas-en');
+      } catch {
+        setCurrentVoice('aura-2-arcas-en');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [userId]);
 
   const selectVoice = useCallback(async (voiceId: string) => {
+    if (!userId) return;
     setSaving(voiceId);
     try {
-      const res = await fetch(`${ApiConfig.CHAT_URL}/admin/voice`, {
+      const token = await getAuthToken();
+      const res = await fetch(`${ApiConfig.CHAT_URL}/context/profile/${encodeURIComponent(userId)}/voice`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ voice: voiceId }),
       });
       const data = await res.json();
@@ -44,7 +65,7 @@ export default function VoiceSettingsScreen() {
       }
     } catch {}
     setSaving(null);
-  }, []);
+  }, [userId]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -63,6 +84,10 @@ export default function VoiceSettingsScreen() {
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator color={Colors.coral} />
+        </View>
+      ) : !userId ? (
+        <View style={styles.center}>
+          <Text style={styles.subtitle}>Sign in to choose your buddy's voice.</Text>
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.scroll}>

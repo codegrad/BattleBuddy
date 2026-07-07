@@ -14,7 +14,6 @@
 
 import { create } from 'zustand';
 import { EngagementConfig, ApiConfig } from '../config';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type EngagementState =
   | 'idle'
@@ -180,9 +179,8 @@ export function shouldNudge(): EngagementEvent | null {
  */
 async function sendNudge(event: EngagementEvent): Promise<void> {
   try {
-    const userId = await AsyncStorage.getItem('bb_current_user')
-      .then(s => s ? JSON.parse(s).id : null)
-      .catch(() => null);
+    const { useAuthStore } = await import('../stores/authStore');
+    const userId = useAuthStore.getState().user?.id ?? null;
     if (!userId) return;
 
     await fetch(`${ApiConfig.CHAT_URL}/nudge/send`, {
