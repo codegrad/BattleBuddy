@@ -17,9 +17,14 @@ import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import EntityBackground from './EntityBackground';
 import { recordSessionOutcome } from '../../services/outcomeRecorder';
+import { logEvent } from '../../services/eventService';
 import { useAuthStore } from '../../stores/authStore';
 import { Colors } from '../../theme';
 import { NAV_ROUTES, type Direction } from '../../lib/navDirections';
+
+// Decision gets its own accent so it never reads as either a win (green) or
+// a loss (the gave-in chip) — a conscious choice is neither (doc 08 §2).
+const DECISION_COLOR = '#8B5CF6';
 
 const BB_SIZE = 80;
 const GLOW_SIZE = BB_SIZE + 24;
@@ -72,6 +77,8 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
   const menuOpacity = useSharedValue(0);
   const resistedFly = useSharedValue(0);
   const gaveInFly = useSharedValue(0);
+  const decisionFly = useSharedValue(0);
+  const talkingFly = useSharedValue(0);
 
   // First-launch hint.
   const hintRingScale = useSharedValue(1);
@@ -135,8 +142,10 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
       menuOpacity.value = 0;
       resistedFly.value = 0;
       gaveInFly.value = 0;
+      decisionFly.value = 0;
+      talkingFly.value = 0;
       setMenuOpen(false);
-    }, [translateX, translateY, dragScale, glowOpacity, currentDir, lockedAxis, menuOpacity, resistedFly, gaveInFly]),
+    }, [translateX, translateY, dragScale, glowOpacity, currentDir, lockedAxis, menuOpacity, resistedFly, gaveInFly, decisionFly, talkingFly]),
   );
 
   const navigateTo = useCallback((direction: Direction) => {
@@ -147,9 +156,11 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     resistedFly.value = 0;
     gaveInFly.value = 0;
+    decisionFly.value = 0;
+    talkingFly.value = 0;
     setMenuOpen(true);
     menuOpacity.value = withTiming(1, { duration: 180 });
-  }, [menuOpacity, resistedFly, gaveInFly]);
+  }, [menuOpacity, resistedFly, gaveInFly, decisionFly, talkingFly]);
 
   const closeMenu = useCallback(() => {
     menuOpacity.value = withTiming(0, { duration: 150 }, (finished) => {
@@ -168,6 +179,34 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
       if (finished) runOnJS(setMenuOpen)(false);
     }));
   }, [menuOpacity, resistedFly, gaveInFly]);
+
+  // A decision is a conscious choice to smoke, not a slip — logged distinctly
+  // from urge_gave_in so neither the agent nor the dashboard treats it as a
+  // failure (doc 08 §2). No shame-adjacent haptic or copy anywhere near it.
+  const handleDecision = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const userId = useAuthStore.getState().user?.id || 'default';
+    const timestamp = new Date().toISOString();
+    logEvent(userId, 'decision', {}, timestamp);
+    logEvent(userId, 'cigarette', {}, timestamp);
+
+    decisionFly.value = withTiming(1, { duration: 260 });
+    menuOpacity.value = withDelay(120, withTiming(0, { duration: 200 }, (finished) => {
+      if (finished) runOnJS(setMenuOpen)(false);
+    }));
+  }, [menuOpacity, decisionFly]);
+
+  // No event logged — this is just a door into chat, not an outcome.
+  const handleTalking = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    talkingFly.value = withTiming(1, { duration: 260 });
+    menuOpacity.value = withTiming(0, { duration: 200 }, (finished) => {
+      if (finished) {
+        runOnJS(setMenuOpen)(false);
+        runOnJS(navigateTo)('up');
+      }
+    });
+  }, [menuOpacity, talkingFly, navigateTo]);
 
   const tapGesture = Gesture.Tap()
     .maxDistance(TAP_MAX_DISTANCE)
@@ -259,6 +298,14 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
     opacity: menuOpacity.value * (1 - gaveInFly.value),
     transform: [{ translateY: -gaveInFly.value * 40 }],
   }));
+  const decisionStyle = useAnimatedStyle(() => ({
+    opacity: menuOpacity.value * (1 - decisionFly.value),
+    transform: [{ translateY: -decisionFly.value * 40 }],
+  }));
+  const talkingStyle = useAnimatedStyle(() => ({
+    opacity: menuOpacity.value * (1 - talkingFly.value),
+    transform: [{ translateY: -talkingFly.value * 40 }],
+  }));
 
   const hintRingStyle = useAnimatedStyle(() => ({
     opacity: hintRingOpacity.value,
@@ -307,6 +354,20 @@ export default function HubHomeScreen(_props: HubHomeScreenProps) {
                 <Text style={styles.optionEmoji}>😐</Text>
               </TouchableOpacity>
               <Text style={styles.optionLabel}>Gave In</Text>
+            </Animated.View>
+
+            <Animated.View style={[styles.optionWrap, styles.optionDecision, decisionStyle]} pointerEvents={menuOpen ? 'auto' : 'none'}>
+              <TouchableOpacity style={[styles.optionChip, styles.decisionChip]} activeOpacity={0.8} onPress={handleDecision}>
+                <Text style={styles.optionEmoji}>🙂</Text>
+              </TouchableOpacity>
+              <Text style={[styles.optionLabel, styles.decisionLabel]}>Decision</Text>
+            </Animated.View>
+
+            <Animated.View style={[styles.optionWrap, styles.optionTalking, talkingStyle]} pointerEvents={menuOpen ? 'auto' : 'none'}>
+              <TouchableOpacity style={[styles.optionChip, styles.talkingChip]} activeOpacity={0.8} onPress={handleTalking}>
+                <Text style={styles.optionEmoji}>💬</Text>
+              </TouchableOpacity>
+              <Text style={[styles.optionLabel, styles.talkingLabel]}>Just Talking</Text>
             </Animated.View>
 
             <Animated.View style={[styles.glowRing, glowStyle]} pointerEvents="none" />
@@ -412,6 +473,12 @@ const styles = StyleSheet.create({
   optionRight: {
     transform: [{ translateX: 30 }, { translateY: -100 }],
   },
+  optionDecision: {
+    transform: [{ translateX: -140 }, { translateY: -20 }],
+  },
+  optionTalking: {
+    transform: [{ translateX: 84 }, { translateY: -20 }],
+  },
   optionChip: {
     width: ICON_SIZE,
     height: ICON_SIZE,
@@ -422,6 +489,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  decisionChip: {
+    backgroundColor: 'rgba(139,92,246,0.14)',
+    borderColor: DECISION_COLOR,
+  },
+  talkingChip: {
+    backgroundColor: 'rgba(91,159,255,0.14)',
+    borderColor: Colors.stateIdle,
+  },
   optionEmoji: {
     fontSize: 28,
   },
@@ -431,6 +506,12 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     textTransform: 'uppercase',
     color: Colors.textSecondary,
+  },
+  decisionLabel: {
+    color: '#C4B5FD',
+  },
+  talkingLabel: {
+    color: '#A9C8FF',
   },
   hintRing: {
     position: 'absolute',
