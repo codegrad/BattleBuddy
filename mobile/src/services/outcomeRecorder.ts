@@ -57,7 +57,10 @@ export async function recordOutcome(result: SessionResult): Promise<void> {
     try {
       await fetch(`${ApiConfig.CHAT_URL}/context/analyze`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${ApiConfig.CLIENT_TOKEN}`,
+        },
         body: JSON.stringify({
           userId,
           sessionId: result.sessionId,
@@ -236,7 +239,10 @@ export async function recordSessionOutcome(
   try {
     await fetch(`${ApiConfig.CHAT_URL}/context/session-outcome`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${ApiConfig.CLIENT_TOKEN}`,
+      },
       body: JSON.stringify({ userId, outcome, timestamp }),
     });
   } catch {

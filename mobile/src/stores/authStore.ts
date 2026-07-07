@@ -36,7 +36,10 @@ async function seedProfile(userId: string, name: string): Promise<void> {
   const { ApiConfig } = await import('../config');
   fetch(`${ApiConfig.CHAT_URL}/context/seed`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${ApiConfig.CLIENT_TOKEN}`,
+    },
     body: JSON.stringify({ userId, name }),
   }).catch(() => {});
 }

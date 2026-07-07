@@ -56,6 +56,11 @@ export const ApiConfig = {
 
   // Cloudflare R2 public bucket URL — base for the content video feed
   CF_R2_PUBLIC_URL: process.env.EXPO_PUBLIC_CF_R2_PUBLIC_URL ?? '',
+
+  // App-identity token for server routes with no per-user auth of their own
+  // (context/analyze, context/seed, context/session-outcome). Set via EAS
+  // secret env var for builds — never commit the real value (public repo).
+  CLIENT_TOKEN: process.env.EXPO_PUBLIC_BB_CLIENT_TOKEN ?? '',
 } as const;
 
 export const EngagementConfig = {
