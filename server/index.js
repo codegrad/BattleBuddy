@@ -689,6 +689,29 @@ function checkAdminSecret(req) {
   return timingSafeEqual(a, b);
 }
 
+// Shared app-identity secret embedded in the mobile build (BB_CLIENT_TOKEN) —
+// proves "this is our app", not "this is a specific user". Gates routes that
+// have no per-user ownership check of their own (userId comes from the body,
+// unverified). Routes that already authorize per-user via Supabase JWT
+// (authorizeProfileAccess) don't need this on top — a shared token would only
+// let any app install act as any userId, which is a weaker guarantee than the
+// JWT check they already have.
+function checkClientToken(req) {
+  const authHeader = req.headers['authorization'] || '';
+  const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  const expected = process.env.BB_CLIENT_TOKEN;
+  if (!provided || !expected) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+function send401Unauthorized(res) {
+  res.writeHead(401, { ...CORS, 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'unauthorized' }));
+}
+
 function send401(res, status, error) {
   res.writeHead(status, { ...CORS, 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error }));
@@ -1502,6 +1525,7 @@ Return ONLY the JSON object, no markdown, no explanation.`;
 
   // Trigger a context analysis (called by the app on session end or mid-session)
   if (req.method === 'POST' && req.url === '/context/analyze') {
+    if (!checkClientToken(req)) return send401Unauthorized(res);
     let body = '';
     for await (const chunk of req) body += chunk;
     try {
@@ -1547,6 +1571,7 @@ Return ONLY the JSON object, no markdown, no explanation.`;
 
   // Seed a user profile (called on account creation)
   if (req.method === 'POST' && req.url === '/context/seed') {
+    if (!checkClientToken(req)) return send401Unauthorized(res);
     let body = '';
     for await (const chunk of req) body += chunk;
     try {
@@ -1562,6 +1587,7 @@ Return ONLY the JSON object, no markdown, no explanation.`;
 
   // Record a session outcome (resisted / gave_in) into the user's profile
   if (req.method === 'POST' && req.url === '/context/session-outcome') {
+    if (!checkClientToken(req)) return send401Unauthorized(res);
     let body = '';
     for await (const chunk of req) body += chunk;
     try {
