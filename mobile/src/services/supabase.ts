@@ -11,6 +11,10 @@ export const supabase = createClient(
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
+      // PKCE puts a single-use `?code=` on the recovery deep link instead of
+      // a URL-fragment token pair — much simpler to read via expo-router's
+      // useLocalSearchParams() than parsing a fragment by hand.
+      flowType: 'pkce',
     },
   },
 );

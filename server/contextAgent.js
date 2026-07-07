@@ -80,6 +80,8 @@ const SCHEDULE_MODEL_ARRAYS = ['routine_blocks', 'vulnerability_windows', 'life_
 export const USER_ALIASES = {
   'default': 'user-1782351957094',
   'user-1782249813276': 'user-1782351957094',
+  // Real Supabase Auth UID for mike@strangepair.com, established 2026-07-07.
+  'a4a90d90-e7e9-42dd-abbc-b1033afaf834': 'user-1782351957094',
 };
 
 export function resolveUserId(userId) {

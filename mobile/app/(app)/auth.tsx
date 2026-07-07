@@ -25,6 +25,24 @@ export default function AuthScreen() {
   const signIn = useAuthStore((s) => s.signIn);
   const signUp = useAuthStore((s) => s.signUp);
   const pendingConfirmation = useAuthStore((s) => s.pendingConfirmation);
+  const resetPasswordForEmail = useAuthStore((s) => s.resetPasswordForEmail);
+  const [resetSentTo, setResetSentTo] = useState<string | null>(null);
+
+  const handleForgotPassword = useCallback(async () => {
+    setError(null);
+    if (!email.trim()) {
+      setError('Enter your email above first');
+      return;
+    }
+    setLoading(true);
+    const err = await resetPasswordForEmail(email.trim());
+    setLoading(false);
+    if (err) {
+      setError(err);
+      return;
+    }
+    setResetSentTo(email.trim().toLowerCase());
+  }, [email, resetPasswordForEmail]);
 
   const handleSubmit = useCallback(async () => {
     setError(null);
@@ -39,6 +57,29 @@ export default function AuthScreen() {
   const canSubmit = mode === 'signup'
     ? name.trim().length > 0 && email.trim().length > 0 && password.length >= 6
     : email.trim().length > 0 && password.length >= 6;
+
+  if (resetSentTo) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.content}>
+          <View style={styles.mascotArea}>
+            <BBMascot state="idle" size={140} showRing={false} />
+          </View>
+          <Text style={styles.title}>Check your email</Text>
+          <Text style={styles.subtitle}>
+            We sent a password reset link to {resetSentTo}. Tap it to set a new password.
+          </Text>
+          <TouchableOpacity
+            style={styles.button}
+            onPress={() => setResetSentTo(null)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.buttonText}>Back to sign in</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (pendingConfirmation) {
     return (
@@ -114,6 +155,12 @@ export default function AuthScreen() {
 
           {error && <Text style={styles.error}>{error}</Text>}
 
+          {mode === 'signin' && (
+            <TouchableOpacity onPress={handleForgotPassword} disabled={loading}>
+              <Text style={styles.forgotText}>Forgot password?</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             style={[styles.button, (!canSubmit || loading) && styles.buttonDisabled]}
             onPress={handleSubmit}
@@ -157,6 +204,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md, paddingVertical: 14, fontSize: 16, color: Colors.textPrimary,
   },
   error: { color: Colors.error, fontSize: 14, textAlign: 'center' },
+  forgotText: { color: Colors.textSecondary, fontSize: 13, textAlign: 'right' },
   button: {
     backgroundColor: Colors.coral, borderRadius: Radii.md,
     paddingVertical: 16, alignItems: 'center', marginTop: Spacing.xs,

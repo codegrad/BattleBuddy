@@ -16,10 +16,16 @@ interface AuthState {
   // confirmation before a session exists (project has mailer_autoconfirm off).
   // Cleared on a successful sign-in.
   pendingConfirmation: string | null;
+  // True from the moment a recovery deep link establishes a session until a
+  // new password is saved — lets (app)/_layout.tsx hold off on its normal
+  // auth-redirect logic so the reset-password screen isn't bounced away.
+  passwordRecovery: boolean;
   initialize: () => Promise<void>;
   signUp: (name: string, email: string, password: string) => Promise<string | null>;
   signIn: (email: string, password: string) => Promise<string | null>;
   signOut: () => Promise<void>;
+  resetPasswordForEmail: (email: string) => Promise<string | null>;
+  completePasswordReset: (password: string) => Promise<string | null>;
 }
 
 function toLocalUser(session: Session | null): LocalUser | null {
@@ -47,14 +53,19 @@ async function seedProfile(userId: string, name: string): Promise<void> {
 export const useAuthStore = create<AuthState>((set) => {
   // Keeps the store in sync with token refreshes and sign-outs triggered
   // elsewhere (e.g. a refresh token rejected by the server).
-  supabase.auth.onAuthStateChange((_event, session) => {
-    set({ user: toLocalUser(session), loading: false });
+  supabase.auth.onAuthStateChange((event, session) => {
+    set({
+      user: toLocalUser(session),
+      loading: false,
+      ...(event === 'PASSWORD_RECOVERY' ? { passwordRecovery: true } : {}),
+    });
   });
 
   return {
     user: null,
     loading: true,
     pendingConfirmation: null,
+    passwordRecovery: false,
 
     initialize: async () => {
       try {
@@ -106,7 +117,25 @@ export const useAuthStore = create<AuthState>((set) => {
 
     signOut: async () => {
       await supabase.auth.signOut();
-      set({ user: null });
+      set({ user: null, passwordRecovery: false });
+    },
+
+    resetPasswordForEmail: async (email) => {
+      const trimmedEmail = email.trim().toLowerCase();
+      if (!trimmedEmail) return 'Email required';
+      const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
+        redirectTo: 'battlebuddy://reset-password',
+      });
+      if (error) return error.message;
+      return null;
+    },
+
+    completePasswordReset: async (password) => {
+      if (!password || password.length < 6) return 'Password must be at least 6 characters';
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) return error.message;
+      set({ passwordRecovery: false });
+      return null;
     },
   };
 });

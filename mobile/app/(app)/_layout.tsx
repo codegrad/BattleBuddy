@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Stack, router } from 'expo-router';
+import { Stack, router, useSegments } from 'expo-router';
 import AppDrawer from '../../src/components/drawer/AppDrawer';
 import { useUIStore } from '../../src/stores/uiStore';
 import { useOnboarding } from '../../src/hooks/useOnboarding';
@@ -22,6 +22,8 @@ export default function AppLayout() {
   const authUser = useAuthStore((s) => s.user);
   const authLoading = useAuthStore((s) => s.loading);
   const initAuth = useAuthStore((s) => s.initialize);
+  const passwordRecovery = useAuthStore((s) => s.passwordRecovery);
+  const segments = useSegments();
 
   // Initialize auth on mount
   useEffect(() => {
@@ -106,6 +108,12 @@ export default function AppLayout() {
   const currentRoute = useRef<string | null>(null);
   useEffect(() => {
     if (authLoading) return;
+    // A recovery deep link lands here with a session but no business being
+    // routed into onboarding/hub yet — let reset-password.tsx own navigation
+    // until the new password is saved. Segments check covers the cold-start
+    // case where passwordRecovery hasn't been set yet but the deep link
+    // already opened straight into this route.
+    if (passwordRecovery || segments.includes('reset-password')) return;
 
     let target: string | null = null;
     if (!authUser) {
@@ -168,6 +176,7 @@ export default function AppLayout() {
       >
         <Stack.Screen name="index" />
         <Stack.Screen name="auth" options={{ animation: 'fade' }} />
+        <Stack.Screen name="reset-password" options={{ animation: 'fade' }} />
         <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
         <Stack.Screen name="disclaimer" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="history" options={{ animation: 'slide_from_right' }} />
