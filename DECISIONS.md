@@ -104,4 +104,12 @@ The `craving_events`/`messages`/`session_reports` tables and their RLS design st
 
 ---
 
+## 2026-07-07 — `agentDesignLoop.js`: streamed apply-proposals call + admin auth header
+
+**Decision.** Two fixes to `server/agentDesignLoop.js`, found while running the scheduled design loop: (1) `applyProposalsToSystemPrompt` now calls `client.messages.stream(...).finalMessage()` instead of a plain non-streaming `client.messages.create(...)`; (2) `fetchRemoteProfile` now sends `x-bb-admin-secret` on its request to `/context/profile/:userId`.
+**Why.** (1) That call regenerates the full system prompt (up to 16,384 output tokens) in one non-streaming response. It hit `APIConnectionTimeoutError` three times in a row on 2026-07-07 as the prompt crossed ~46K chars — including once with the client `timeout` option explicitly raised to 20 minutes, which made no difference. That rules out a client-side timeout being too short; something in the network path (likely a proxy/load balancer enforcing an idle-connection limit) drops long non-streaming responses before the first byte arrives. Streaming keeps bytes flowing so nothing treats the connection as idle — this is Anthropic's own standing recommendation for long-running generations, not a workaround specific to this bug. (2) The same day, an unrelated security fix (`8a14aa3`, lock down unauthenticated endpoints) started requiring `x-bb-admin-secret` or a per-user Supabase JWT on that route. The design loop is neither a logged-in user nor able to obtain a JWT — it's internal tooling, same category as `admin.html`, so it authenticates the same way `admin.html` does.
+**Affects.** `server/agentDesignLoop.js` only. Any future full-file rewrite call added to this script (or a similar one) should default to streaming if `max_tokens` is large — a non-streaming call that *happens* to be fast today can start silently timing out once the file it's rewriting grows past whatever threshold the network path enforces.
+
+---
+
 > Tip: pre-existing strategic choices that predate this log and still stand — React Native + Expo, Supabase, the hybrid Gemma (on-device) + Claude (cloud) brain, and Sesame CSM for voice — are documented in `CLAUDE.md` and `docs/`. Only log *changes* and *new* decisions here.
