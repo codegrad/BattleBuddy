@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>BattleBuddy — Gamification & Journey mockup</title>
+<style>
+  :root {
+    --coral: #E8624A;
+    --coral-soft: #FF6B6B;
+    --idle: #5B9FFF;
+    --listening: #FF9F0A;
+    --user-speaking: #34C759;
+    --speaking: #E8624A;
+    --decision: #8B5CF6;
+    --bg: #1C1C1E;
+    --surface: #2C2C2E;
+    --surface-border: #3A3A3C;
+    --surface-light: #48484A;
+    --text-primary: #FFFFFF;
+    --text-secondary: #8E8E93;
+    --text-tertiary: #636366;
+    --success: #34C759;
+    --warning: #FF9F0A;
+    --error: #FF453A;
+    --sp-xs: 4px; --sp-sm: 8px; --sp-md: 16px; --sp-lg: 24px; --sp-xl: 32px; --sp-xxl: 48px;
+    --r-sm: 8px; --r-md: 16px; --r-lg: 24px; --r-xl: 32px; --r-full: 9999px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #000;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    color: var(--text-primary);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 32px;
+    justify-content: center;
+    padding: 32px;
+  }
+  .frame-label {
+    text-align: center;
+    color: #999;
+    font-size: 13px;
+    margin-bottom: 10px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .phone {
+    width: 390px;
+    height: 844px;
+    background: var(--bg);
+    border-radius: 44px;
+    border: 8px solid #0a0a0a;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  }
+  .screen { height: 100%; overflow-y: auto; padding-bottom: 40px; }
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 56px var(--sp-md) var(--sp-sm);
+  }
+  .topbar h1 { font-size: 22px; font-weight: 800; margin: 0; }
+  .tabs {
+    display: flex; gap: var(--sp-sm); padding: 0 var(--sp-md) var(--sp-md);
+  }
+  .tab {
+    flex: 1; text-align: center; padding: 12px 0; border-radius: var(--r-full);
+    background: var(--surface); color: var(--text-secondary); font-size: 15px; font-weight: 700;
+    border: 1px solid var(--surface-border); cursor: pointer;
+  }
+  .tab.active { background: var(--coral); color: #fff; border-color: var(--coral); }
+  .content { padding: 0 var(--sp-md); display: flex; flex-direction: column; gap: var(--sp-md); }
+  .eyebrow { font-size: 15px; color: var(--text-secondary); line-height: 1.4; margin: -8px 0 4px; }
+  .section-title { font-size: 20px; font-weight: 800; margin: var(--sp-sm) 0 0; }
+  .section-sub { font-size: 14px; color: var(--text-tertiary); margin-top: -8px; }
+
+  /* Direction toggle (demo-only chrome, not part of the shipped screen) */
+  .dir-toggle { display:flex; gap:6px; padding: 0 var(--sp-md); margin-bottom: 4px; }
+  .dir-chip { font-size: 13px; padding: 6px 12px; border-radius: var(--r-full); background: rgba(255,255,255,0.06); color: var(--text-tertiary); cursor:pointer; border: 1px solid transparent; }
+  .dir-chip.active { color: var(--text-primary); border-color: var(--surface-border); background: var(--surface-light); }
+
+  /* ---------- Records: Direction A — Trophy Shelf (grid tiles) ---------- */
+  .records-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-sm); }
+  .record-tile {
+    background: var(--surface); border-radius: var(--r-md); padding: var(--sp-md);
+    border: 1px solid var(--surface-border);
+  }
+  .record-tile .icon { font-size: 24px; margin-bottom: 6px; display:block; }
+  .record-tile .value { font-size: 32px; font-weight: 800; color: var(--coral); line-height: 1.05; }
+  .record-tile .unit { font-size: 13.5px; color: var(--text-secondary); margin-top: 4px; line-height: 1.3; }
+  .record-tile .meta { font-size: 12px; color: var(--text-tertiary); margin-top: 10px; }
+  .record-tile .ctx { font-size: 12px; color: var(--text-tertiary); font-style: italic; margin-top: 2px; }
+
+  /* ---------- Records: Direction B — Ledger (list rows) ---------- */
+  .records-list { display: flex; flex-direction: column; gap: var(--sp-sm); }
+  .record-row {
+    display: flex; align-items: center; gap: var(--sp-md);
+    background: var(--surface); border-radius: var(--r-md); padding: 16px var(--sp-md);
+    border: 1px solid var(--surface-border);
+  }
+  .record-row .icon-wrap {
+    width: 46px; height: 46px; border-radius: var(--r-full); background: rgba(232,98,74,0.12);
+    display:flex; align-items:center; justify-content:center; font-size: 21px; flex-shrink:0;
+  }
+  .record-row .info { flex: 1; }
+  .record-row .label { font-size: 15px; color: var(--text-secondary); }
+  .record-row .num { font-size: 25px; font-weight: 800; color: var(--text-primary); }
+  .record-row .num span { color: var(--coral); }
+  .record-row .date { font-size: 12px; color: var(--text-tertiary); text-align: right; white-space: nowrap; }
+
+  /* Milestones (shared) */
+  .milestone {
+    display: flex; align-items: center; gap: var(--sp-md);
+    background: var(--surface); border-radius: var(--r-md); padding: var(--sp-md);
+    border: 1px solid var(--surface-border);
+  }
+  .milestone.unlocked { border-color: rgba(52,199,89,0.4); }
+  .milestone .check {
+    width: 34px; height: 34px; border-radius: var(--r-full); flex-shrink: 0;
+    display:flex; align-items:center; justify-content:center; font-size: 17px;
+    background: rgba(52,199,89,0.15); color: var(--success);
+  }
+  .milestone.locked .check { background: rgba(255,255,255,0.05); color: var(--text-tertiary); }
+  .milestone .m-title { font-size: 16px; font-weight: 700; }
+  .milestone.locked .m-title { color: var(--text-tertiary); }
+  .milestone .m-sub { font-size: 13px; color: var(--text-tertiary); margin-top: 3px; line-height: 1.35; }
+
+  /* Celebration banner */
+  .celebrate {
+    background: linear-gradient(135deg, rgba(232,98,74,0.18), rgba(52,199,89,0.10));
+    border: 1px solid rgba(232,98,74,0.35);
+    border-radius: var(--r-md); padding: var(--sp-md);
+    display: flex; align-items: center; gap: var(--sp-md);
+  }
+  .celebrate .mascot-dot { width: 44px; height: 44px; border-radius: 50%; background: var(--success); flex-shrink:0;
+    box-shadow: 0 0 0 6px rgba(52,199,89,0.15); }
+  .celebrate .ctext { font-size: 15px; line-height: 1.4; }
+  .celebrate .ctext b { color: var(--success); }
+
+  /* ---------- Journey: Arc chart ---------- */
+  .arc-card { background: var(--surface); border-radius: var(--r-md); padding: var(--sp-md); border: 1px solid var(--surface-border); }
+  .arc-legend { display:flex; gap: var(--sp-md); font-size: 12.5px; color: var(--text-tertiary); margin-top: 8px; }
+  .legend-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+
+  /* ---------- Heatmap ---------- */
+  .heatmap { background: var(--surface); border-radius: var(--r-md); padding: var(--sp-md); border: 1px solid var(--surface-border); }
+  .heat-grid { display: grid; grid-template-columns: 34px repeat(7, 1fr); gap: 4px; margin-top: 10px; }
+  .heat-label { font-size: 11px; color: var(--text-tertiary); display:flex; align-items:center; font-weight: 600; }
+  .heat-day { font-size: 11px; color: var(--text-tertiary); text-align:center; font-weight: 600; }
+  .heat-cell { aspect-ratio: 1; border-radius: 4px; }
+
+  /* ---------- What works ---------- */
+  .works-card { background: var(--surface); border-radius: var(--r-md); padding: var(--sp-md); border: 1px solid var(--surface-border); display:flex; flex-direction:column; gap: 14px; }
+  .works-row .works-top { display:flex; justify-content: space-between; font-size: 15px; margin-bottom: 5px; }
+  .works-top .name { font-weight: 700; }
+  .works-top .ratio { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  .bar-track { height: 9px; border-radius: var(--r-full); background: rgba(255,255,255,0.06); overflow:hidden; }
+  .bar-fill { height: 100%; border-radius: var(--r-full); background: var(--coral); }
+
+  /* ---------- Independence trend ---------- */
+  .indep-card { background: var(--surface); border-radius: var(--r-md); padding: var(--sp-md); border: 1px solid var(--surface-border); }
+  .indep-bars { display:flex; align-items:flex-end; gap: 10px; height: 100px; margin-top: 12px; }
+  .indep-col { flex:1; display:flex; flex-direction:column-reverse; height:100%; border-radius: 6px; overflow:hidden; }
+  .indep-week-label { font-size: 11px; color: var(--text-tertiary); text-align:center; margin-top:6px; font-weight: 600; }
+
+  /* ---------- Insight cards ---------- */
+  .insight-card { background: var(--surface); border-radius: var(--r-md); padding: var(--sp-md); border: 1px solid var(--surface-border); display:flex; flex-direction:column; gap: 12px; }
+  .insight-text { font-size: 16px; line-height: 1.5; color: var(--text-primary); }
+  .insight-btn {
+    align-self: flex-start; font-size: 14px; font-weight: 700; color: var(--coral);
+    background: rgba(232,98,74,0.12); padding: 9px 16px; border-radius: var(--r-full); border: none;
+  }
+
+  /* ---------- Quick-log radial menu ---------- */
+  .qlog-phone .screen { display:flex; align-items:center; justify-content:center; position:relative; }
+  .qlog-hub { position: relative; width: 100%; height: 100%; display:flex; align-items:center; justify-content:center; }
+  .qlog-caption { position:absolute; top: 90px; left:0; right:0; text-align:center; color: var(--text-tertiary); font-size: 14px; padding: 0 40px; }
+  .bb-circle {
+    width: 80px; height: 80px; border-radius: 50%; background: var(--coral);
+    box-shadow: 0 0 0 3px rgba(255,255,255,0.85);
+  }
+  .qopt {
+    position: absolute; display:flex; flex-direction:column; align-items:center; gap: 8px; width: 76px;
+  }
+  .qopt .chip {
+    width: 56px; height: 56px; border-radius: 50%; background: var(--surface);
+    border: 1.5px solid var(--surface-border); display:flex; align-items:center; justify-content:center; font-size: 24px;
+  }
+  .qopt .qlabel { font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-secondary); text-align:center; }
+  .qopt.resisted { transform: translate(-118px, -150px); }
+  .qopt.gavein   { transform: translate(42px, -150px); }
+  .qopt.decision { transform: translate(-150px, -10px); }
+  .qopt.decision .chip { background: rgba(139,92,246,0.14); border-color: var(--decision); }
+  .qopt.decision .qlabel { color: #C4B5FD; }
+  .qopt.talking  { transform: translate(74px, -10px); }
+  .qopt.talking .chip { background: rgba(91,159,255,0.14); border-color: var(--idle); }
+  .qopt.talking .qlabel { color: #A9C8FF; }
+</style>
+</head>
+<body>
+
+<div>
+  <div class="frame-label">1 — Personal Records Wall (goals.tsx)</div>
+  <div class="phone">
+    <div class="screen">
+      <div class="topbar"><h1>Records</h1><span style="font-size:20px;">☰</span></div>
+
+      <div class="dir-toggle">
+        <div class="dir-chip active" data-dir="A" onclick="setDirection('A')">A · Trophy Shelf</div>
+        <div class="dir-chip" data-dir="B" onclick="setDirection('B')">B · Ledger</div>
+      </div>
+
+      <div class="content">
+        <p class="eyebrow">Records only ever get better. A slip never resets anything here.</p>
+
+        <div class="celebrate">
+          <div class="mascot-dot"></div>
+          <div class="ctext">New record — <b>14h 20m</b> between cigarettes. Your longest yet.</div>
+        </div>
+
+        <!-- Direction A -->
+        <div id="dirA">
+          <div class="records-grid">
+            <div class="record-tile">
+              <span class="icon">⏱️</span>
+              <div class="value">14h 20m</div>
+              <div class="unit">Longest stretch between cigarettes</div>
+              <div class="meta">Set Jul 2, 2026</div>
+              <div class="ctx">Stayed busy after the gym</div>
+            </div>
+            <div class="record-tile">
+              <span class="icon">🌊</span>
+              <div class="value">6</div>
+              <div class="unit">Most urges ridden out — one day</div>
+              <div class="meta">Set Jun 28, 2026</div>
+            </div>
+            <div class="record-tile">
+              <span class="icon">📈</span>
+              <div class="value">23</div>
+              <div class="unit">Most urges ridden out — one week</div>
+              <div class="meta">Set Jul 4, 2026</div>
+            </div>
+            <div class="record-tile">
+              <span class="icon">🎯</span>
+              <div class="value">9</div>
+              <div class="unit">Lowest day (baseline: 30)</div>
+              <div class="meta">Set Jun 30, 2026</div>
+              <div class="ctx">70% below baseline</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Direction B -->
+        <div id="dirB" style="display:none;">
+          <div class="records-list">
+            <div class="record-row">
+              <div class="icon-wrap">⏱️</div>
+              <div class="info">
+                <div class="label">Longest stretch between cigarettes</div>
+                <div class="num"><span>14h 20m</span></div>
+              </div>
+              <div class="date">Jul 2<br/>2026</div>
+            </div>
+            <div class="record-row">
+              <div class="icon-wrap">🌊</div>
+              <div class="info">
+                <div class="label">Most urges ridden out, one day</div>
+                <div class="num"><span>6</span></div>
+              </div>
+              <div class="date">Jun 28<br/>2026</div>
+            </div>
+            <div class="record-row">
+              <div class="icon-wrap">📈</div>
+              <div class="info">
+                <div class="label">Most urges ridden out, one week</div>
+                <div class="num"><span>23</span></div>
+              </div>
+              <div class="date">Jul 4<br/>2026</div>
+            </div>
+            <div class="record-row">
+              <div class="icon-wrap">🎯</div>
+              <div class="info">
+                <div class="label">Lowest day vs. baseline (30)</div>
+                <div class="num"><span>9</span></div>
+              </div>
+              <div class="date">Jun 30<br/>2026</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-title">Milestones</div>
+        <div class="milestone unlocked">
+          <div class="check">✓</div>
+          <div>
+            <div class="m-title">Identified your top trigger</div>
+            <div class="m-sub">Unlocked Jun 15, 2026 — evenings, right after the patch comes off</div>
+          </div>
+        </div>
+        <div class="milestone unlocked">
+          <div class="check">✓</div>
+          <div>
+            <div class="m-title">3 coping moves that work for you</div>
+            <div class="m-sub">Unlocked Jun 22, 2026 — garage walk, cold water, calling Alec</div>
+          </div>
+        </div>
+        <div class="milestone unlocked">
+          <div class="check">✓</div>
+          <div>
+            <div class="m-title">Ridden out 10 urges</div>
+            <div class="m-sub">Unlocked Jun 25, 2026</div>
+          </div>
+        </div>
+        <div class="milestone locked">
+          <div class="check">○</div>
+          <div>
+            <div class="m-title">Handled an urge with no session at all</div>
+            <div class="m-sub">Not yet — this one's on you</div>
+          </div>
+        </div>
+        <div class="milestone unlocked">
+          <div class="check">✓</div>
+          <div>
+            <div class="m-title">30 days of honest logging</div>
+            <div class="m-sub">Unlocked Jul 3, 2026 — slips counted too</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div>
+  <div class="frame-label">2 — Journey screen (analytics.tsx rework)</div>
+  <div class="phone">
+    <div class="screen">
+      <div class="topbar"><h1>Journey</h1><span style="font-size:20px;">☰</span></div>
+      <div class="content">
+
+        <div class="section-title" style="margin-top:0;">The Arc</div>
+        <p class="section-sub">Is it working? One glance.</p>
+        <div class="arc-card">
+          <svg viewBox="0 0 320 140" width="100%" height="140">
+            <!-- baseline dashed -->
+            <line x1="10" y1="18" x2="310" y2="18" stroke="#636366" stroke-width="1.5" stroke-dasharray="4 4" />
+            <text x="10" y="12" fill="#636366" font-size="11">baseline 30/day</text>
+            <!-- actual taper line with an in-context slip bump -->
+            <polyline fill="none" stroke="#E8624A" stroke-width="2.5"
+              points="10,32 40,40 70,46 100,52 130,58 155,50 180,70 210,82 240,92 270,104 300,112" />
+            <!-- slip day marker, in context, not shamed -->
+            <circle cx="155" cy="50" r="4" fill="#FF9F0A" />
+            <text x="148" y="42" fill="#FF9F0A" font-size="10" font-weight="700">slip</text>
+            <circle cx="300" cy="112" r="4" fill="#E8624A" />
+          </svg>
+          <div class="arc-legend">
+            <span><span class="legend-dot" style="background:#636366"></span>baseline</span>
+            <span><span class="legend-dot" style="background:#E8624A"></span>your count</span>
+            <span><span class="legend-dot" style="background:#FF9F0A"></span>slip day</span>
+          </div>
+        </div>
+
+        <div class="section-title">Your Hours</div>
+        <p class="section-sub">This is what BB watches for you.</p>
+        <div class="heatmap">
+          <div class="heat-grid">
+            <div></div>
+            <div class="heat-day">Su</div><div class="heat-day">Mo</div><div class="heat-day">Tu</div>
+            <div class="heat-day">We</div><div class="heat-day">Th</div><div class="heat-day">Fr</div><div class="heat-day">Sa</div>
+
+            <div class="heat-label">AM</div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.25)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.4)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.35)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.4)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.3)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.2)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.15)"></div>
+
+            <div class="heat-label">Mid</div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.15)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.2)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.2)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.25)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.2)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.3)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.3)"></div>
+
+            <div class="heat-label">Aft</div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.3)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.35)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.3)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.3)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.35)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.4)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.45)"></div>
+
+            <div class="heat-label">Eve</div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.85)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.95)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.9)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,1)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.9)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.7)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.6)"></div>
+
+            <div class="heat-label">Night</div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.2)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.15)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.15)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.2)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.15)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.25)"></div>
+            <div class="heat-cell" style="background:rgba(232,98,74,0.3)"></div>
+          </div>
+        </div>
+
+        <div class="section-title">What Works for You</div>
+        <div class="works-card">
+          <div class="works-row">
+            <div class="works-top"><span class="name">Garage walk</span><span class="ratio">8 of 10</span></div>
+            <div class="bar-track"><div class="bar-fill" style="width:80%"></div></div>
+          </div>
+          <div class="works-row">
+            <div class="works-top"><span class="name">Rule of Three breathing</span><span class="ratio">6 of 9</span></div>
+            <div class="bar-track"><div class="bar-fill" style="width:67%"></div></div>
+          </div>
+          <div class="works-row">
+            <div class="works-top"><span class="name">Calling Alec</span><span class="ratio">4 of 5</span></div>
+            <div class="bar-track"><div class="bar-fill" style="width:80%"></div></div>
+          </div>
+          <div class="works-row">
+            <div class="works-top"><span class="name">Cold water</span><span class="ratio">3 of 6</span></div>
+            <div class="bar-track"><div class="bar-fill" style="width:50%"></div></div>
+          </div>
+        </div>
+
+        <div class="section-title">Independence Trend</div>
+        <p class="section-sub">More and more, you're catching it yourself.</p>
+        <div class="indep-card">
+          <div class="indep-bars">
+            <div class="indep-col">
+              <div style="height:20%; background:var(--coral)"></div>
+              <div style="height:80%; background:var(--surface-light)"></div>
+            </div>
+            <div class="indep-col">
+              <div style="height:35%; background:var(--coral)"></div>
+              <div style="height:65%; background:var(--surface-light)"></div>
+            </div>
+            <div class="indep-col">
+              <div style="height:50%; background:var(--coral)"></div>
+              <div style="height:50%; background:var(--surface-light)"></div>
+            </div>
+            <div class="indep-col">
+              <div style="height:65%; background:var(--coral)"></div>
+              <div style="height:35%; background:var(--surface-light)"></div>
+            </div>
+          </div>
+          <div style="display:flex; gap:0;">
+            <div class="indep-week-label" style="flex:1;">Wk 1</div>
+            <div class="indep-week-label" style="flex:1;">Wk 2</div>
+            <div class="indep-week-label" style="flex:1;">Wk 3</div>
+            <div class="indep-week-label" style="flex:1;">Wk 4</div>
+          </div>
+          <div class="arc-legend" style="margin-top:10px;">
+            <span><span class="legend-dot" style="background:var(--coral)"></span>self-initiated</span>
+            <span><span class="legend-dot" style="background:var(--surface-light)"></span>prompted</span>
+          </div>
+        </div>
+
+        <div class="section-title">Insights</div>
+        <div class="insight-card">
+          <div class="insight-text">Your evenings around 5pm keep coming up as the hardest stretch — right when the patch comes off.</div>
+          <button class="insight-btn">Talk about this →</button>
+        </div>
+        <div class="insight-card">
+          <div class="insight-text">Walking the garage loop worked 8 of the last 10 times you tried it. That's your best move right now.</div>
+          <button class="insight-btn">Talk about this →</button>
+        </div>
+        <div class="insight-card">
+          <div class="insight-text">You've logged every day for 19 days straight, slips included. That kind of honesty is rare — and it's exactly what makes this work.</div>
+          <button class="insight-btn">Talk about this →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div>
+  <div class="frame-label">3 — Extended quick-log menu (mascot tap)</div>
+  <div class="phone qlog-phone">
+    <div class="screen">
+      <div class="qlog-hub">
+        <div class="qlog-caption">Tap and hold releases here — four taps instead of two</div>
+        <div class="qopt resisted"><div class="chip">💪</div><div class="qlabel">Resisted</div></div>
+        <div class="qopt gavein"><div class="chip">😐</div><div class="qlabel">Gave In</div></div>
+        <div class="qopt decision"><div class="chip">🙂</div><div class="qlabel">Decision</div></div>
+        <div class="qopt talking"><div class="chip">💬</div><div class="qlabel">Just Talking</div></div>
+        <div class="bb-circle"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function setDirection(dir) {
+  document.querySelectorAll('.dir-chip').forEach(c => c.classList.toggle('active', c.dataset.dir === dir));
+  document.getElementById('dirA').style.display = dir === 'A' ? '' : 'none';
+  document.getElementById('dirB').style.display = dir === 'B' ? '' : 'none';
+}
+</script>
+</body>
+</html>

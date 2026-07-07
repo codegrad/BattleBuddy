@@ -2,77 +2,78 @@ import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import type { ComponentProps } from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import ScreenWithEntity from '../../src/components/common/ScreenWithEntity';
-import StatHero from '../../src/components/common/StatHero';
+import BBMascot from '../../src/components/mascot/BBMascot';
 import { useAuthStore } from '../../src/stores/authStore';
-import { fetchSessionStats } from '../../src/services/sessionStats';
+import { fetchRecords, type RecordsData } from '../../src/services/statsService';
 import { Colors, Spacing, Radii } from '../../src/theme';
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
 
-const MILESTONES: { count: number; label: string; icon: IconName }[] = [
-  { count: 1, label: 'First resist', icon: 'leaf-outline' },
-  { count: 3, label: '3 in a row', icon: 'barbell-outline' },
-  { count: 7, label: 'One week', icon: 'star-outline' },
-  { count: 14, label: 'Two weeks', icon: 'flame-outline' },
-  { count: 30, label: 'One month', icon: 'trophy-outline' },
-  { count: 60, label: 'Two months', icon: 'ribbon-outline' },
-  { count: 100, label: 'Triple digits', icon: 'diamond-outline' },
-];
-
 export default function GoalsScreen() {
   const userId = useAuthStore((s) => s.user?.id);
-  const [streak, setStreak] = useState(0);
+  const [data, setData] = useState<RecordsData | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    fetchSessionStats(userId ?? null)
-      .then((s) => { if (!cancelled) setStreak(s.streak); })
+    fetchRecords(userId ?? null)
+      .then((d) => { if (!cancelled) setData(d); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [userId]);
 
-  const next = MILESTONES.find((m) => streak < m.count);
+  const newRecord = data?.records.find((r) => r.isNew);
+
+  // A freshly-broken record gets its own moment — mascot + haptic — the
+  // one time this screen celebrates instead of just reporting.
+  useEffect(() => {
+    if (newRecord) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+  }, [newRecord?.key]);
 
   return (
-    <ScreenWithEntity title="Goals">
+    <ScreenWithEntity title="Records">
       <ScrollView contentContainerStyle={styles.scroll}>
-        <View style={styles.targetCard}>
-          <Ionicons name="shield-checkmark-outline" size={28} color={Colors.coral} style={styles.targetIcon} />
-          <View style={styles.targetInfo}>
-            <Text style={styles.targetTitle}>Quitting smoking</Text>
-            <Text style={styles.targetSubtitle}>Your current habit target</Text>
+        <Text style={styles.eyebrow}>Records only ever get better. A slip never resets anything here.</Text>
+
+        {newRecord && (
+          <View style={styles.celebrate}>
+            <BBMascot state="celebrating" size={56} showRing={false} />
+            <Text style={styles.celebrateText}>
+              New record — <Text style={styles.celebrateHighlight}>{newRecord.value}</Text> {newRecord.unit.toLowerCase()}.
+            </Text>
           </View>
-        </View>
-
-        <StatHero value={streak} label="resist in a row" pluralLabel="resists in a row" />
-
-        {next && (
-          <Text style={styles.nextUp}>
-            {streak === 0
-              ? 'The first resist is the biggest one — Buddy is ready when the urge hits.'
-              : `Next up: ${next.label.toLowerCase()} at ${next.count}. You're ${next.count - streak} away.`}
-          </Text>
         )}
 
+        <View style={styles.grid}>
+          {data?.records.map((r) => (
+            <View key={r.key} style={styles.tile}>
+              <Ionicons name={r.icon as IconName} size={24} color={Colors.textSecondary} style={styles.tileIcon} />
+              <Text style={styles.tileValue}>{r.value}</Text>
+              <Text style={styles.tileUnit}>{r.unit}</Text>
+              <Text style={styles.tileMeta}>Set {formatDate(r.setDate)}</Text>
+              {r.context && <Text style={styles.tileCtx}>{r.context}</Text>}
+            </View>
+          ))}
+        </View>
+
         <Text style={styles.sectionTitle}>Milestones</Text>
-        {MILESTONES.map(({ count, label, icon }) => {
-          const reached = streak >= count;
+        {data?.milestones.map((m) => {
+          const unlocked = !!m.unlockedAt;
           return (
-            <View key={count} style={[styles.milestone, reached && styles.milestoneReached]}>
-              <Ionicons
-                name={icon}
-                size={22}
-                color={reached ? Colors.success : Colors.textSecondary}
-                style={[styles.milestoneIcon, !reached && styles.milestoneDim]}
-              />
+            <View key={m.key} style={[styles.milestone, unlocked && styles.milestoneUnlocked]}>
+              <View style={[styles.check, unlocked ? styles.checkUnlocked : styles.checkLocked]}>
+                <Ionicons name={unlocked ? 'checkmark' : 'ellipse-outline'} size={16} color={unlocked ? Colors.success : Colors.textTertiary} />
+              </View>
               <View style={styles.milestoneInfo}>
-                <Text style={[styles.milestoneLabel, !reached && styles.milestoneDim]}>{label}</Text>
-                <Text style={[styles.milestoneCount, !reached && styles.milestoneDim]}>
-                  {count} {count === 1 ? 'resist' : 'resists'}
+                <Text style={[styles.milestoneTitle, !unlocked && styles.milestoneDim]}>{m.title}</Text>
+                <Text style={styles.milestoneSub}>
+                  {unlocked ? `Unlocked ${formatDate(m.unlockedAt!)}` : 'Not yet'}
+                  {m.detail ? ` — ${m.detail}` : ''}
                 </Text>
               </View>
-              {reached && <Ionicons name="checkmark" size={18} color={Colors.success} />}
             </View>
           );
         })}
@@ -81,32 +82,83 @@ export default function GoalsScreen() {
   );
 }
 
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 const styles = StyleSheet.create({
   scroll: {
     padding: Spacing.md,
     gap: Spacing.md,
+    paddingBottom: Spacing.xxl,
   },
-  targetCard: {
+  eyebrow: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    lineHeight: 20,
+  },
+  celebrate: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.surface,
+    gap: Spacing.md,
+    backgroundColor: 'rgba(52,199,89,0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(52,199,89,0.35)',
     borderRadius: Radii.md,
     padding: Spacing.md,
-    gap: Spacing.md,
   },
-  targetIcon: { width: 32, textAlign: 'center' },
-  targetInfo: { flex: 1 },
-  targetTitle: { fontSize: 16, fontWeight: '700', color: Colors.textPrimary },
-  targetSubtitle: { fontSize: 13, color: Colors.textSecondary, marginTop: 2 },
-  nextUp: {
+  celebrateText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    color: Colors.textPrimary,
+  },
+  celebrateHighlight: {
+    fontWeight: '800',
+    color: Colors.success,
+  },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+  },
+  tile: {
+    flexBasis: '48%',
+    flexGrow: 1,
+    backgroundColor: Colors.surface,
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: Colors.surfaceBorder,
+    padding: Spacing.md,
+  },
+  tileIcon: {
+    marginBottom: 6,
+  },
+  tileValue: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: Colors.coral,
+    lineHeight: 32,
+  },
+  tileUnit: {
     fontSize: 13,
     color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 19,
-    paddingHorizontal: Spacing.md,
+    marginTop: 4,
+    lineHeight: 17,
+  },
+  tileMeta: {
+    fontSize: 11,
+    color: Colors.textTertiary,
+    marginTop: 10,
+  },
+  tileCtx: {
+    fontSize: 11,
+    color: Colors.textTertiary,
+    fontStyle: 'italic',
+    marginTop: 2,
   },
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '700',
     color: Colors.textPrimary,
     marginTop: Spacing.xs,
@@ -116,16 +168,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: Colors.surface,
     borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: Colors.surfaceBorder,
     padding: Spacing.md,
     gap: Spacing.md,
   },
-  milestoneReached: {
-    borderWidth: 1,
-    borderColor: Colors.success,
+  milestoneUnlocked: {
+    borderColor: 'rgba(52,199,89,0.4)',
   },
-  milestoneIcon: { width: 32, textAlign: 'center' },
-  milestoneInfo: { flex: 1 },
-  milestoneLabel: { fontSize: 15, fontWeight: '600', color: Colors.textPrimary },
-  milestoneCount: { fontSize: 12, color: Colors.textTertiary, marginTop: 1 },
-  milestoneDim: { opacity: 0.35 },
+  check: {
+    width: 32,
+    height: 32,
+    borderRadius: Radii.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkUnlocked: {
+    backgroundColor: 'rgba(52,199,89,0.15)',
+  },
+  checkLocked: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  milestoneInfo: {
+    flex: 1,
+  },
+  milestoneTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  milestoneDim: {
+    color: Colors.textTertiary,
+  },
+  milestoneSub: {
+    fontSize: 12,
+    color: Colors.textTertiary,
+    marginTop: 2,
+    lineHeight: 16,
+  },
 });
