@@ -226,7 +226,7 @@ const AGENT_TOOLS = [
   },
   {
     name: 'get_usage_stats',
-    description: "Query the user's smoking and urge event history from the database. Use this for ANY question about cigarette counts, timestamps, last cigarette time, gaps between cigarettes, urges resisted, or milestones. Returns authoritative data — never guess or recall from memory when you can call this tool.",
+    description: "Query the user's smoking and urge event history from the database. Use this for ANY question about cigarette counts, timestamps, last cigarette time, gaps between cigarettes, urges (live or resisted or given in), decisions, or milestones. Returns authoritative data — never guess or recall from memory when you can call this tool.",
     input_schema: {
       type: 'object',
       properties: {
@@ -237,7 +237,7 @@ const AGENT_TOOLS = [
         event_types: {
           type: 'array',
           items: { type: 'string' },
-          description: "Filter by event types: 'cigarette', 'urge_resisted', 'urge_gave_in', 'milestone'. Omit for all types.",
+          description: "Filter by event types: 'cigarette', 'urge', 'urge_resisted', 'urge_gave_in', 'decision', 'milestone'. Omit for all types.",
         },
         limit: {
           type: 'integer',
@@ -249,18 +249,18 @@ const AGENT_TOOLS = [
   },
   {
     name: 'log_event',
-    description: "Log a new smoking or urge event to the database on behalf of the user. Use this when the user mentions they just smoked, resisted an urge, gave in to an urge, or hit a milestone — and it hasn't been logged yet via the app's quick-log. Always confirm what you logged back to the user.",
+    description: "Log a new smoking, urge, decision, or milestone event to the database on behalf of the user — and it hasn't been logged yet via the app's quick-log. 'urge' is a craving that may still be unresolved. 'decision' is a conscious, non-slip choice to smoke — distinct from urge_gave_in. Supports back-dating: pass the true occurred_at even if the user is telling you about it well after the fact ('I had one last night' → ask casually what time, log it at that time, set source to 'retroactive'). Always confirm what you logged back to the user.",
     input_schema: {
       type: 'object',
       properties: {
         event_type: {
           type: 'string',
-          enum: ['cigarette', 'urge_resisted', 'urge_gave_in', 'milestone'],
+          enum: ['cigarette', 'urge', 'urge_resisted', 'urge_gave_in', 'decision', 'milestone'],
           description: 'The type of event to log',
         },
         occurred_at: {
           type: 'string',
-          description: "ISO 8601 timestamp when the event occurred. Use current time if not specified by the user. If user says 'an hour ago', calculate the correct timestamp.",
+          description: "ISO 8601 timestamp when the event actually occurred (not when you're logging it). Use current time if not specified by the user. If user says 'an hour ago' or 'last night', calculate the correct timestamp.",
         },
         notes: {
           type: 'string',
@@ -270,13 +270,36 @@ const AGENT_TOOLS = [
           type: 'string',
           description: "For milestone events only: human-readable label like '24 hours smoke-free'",
         },
+        trigger: {
+          type: 'object',
+          description: 'Structured trigger metadata, when known from the conversation. Never ask the user to fill this in directly — infer it from what they told you.',
+          properties: {
+            category: {
+              type: 'string',
+              enum: ['location', 'activity', 'emotion', 'oral', 'social', 'time'],
+              description: 'What kind of thing triggered this',
+            },
+            label: { type: 'string', description: "Short specific label, e.g. 'garage', 'after coffee', 'stress'" },
+            confidence: { type: 'number', description: '0.0-1.0 — how sure you are this is the actual trigger' },
+            source: {
+              type: 'string',
+              enum: ['conversation', 'quick_log', 'extraction', 'retroactive'],
+              description: 'Where this trigger tag came from',
+            },
+          },
+        },
+        source: {
+          type: 'string',
+          enum: ['conversation', 'quick_log', 'extraction', 'retroactive'],
+          description: "How this event is being logged. Default 'conversation' for a normal live exchange; use 'retroactive' when the user is describing something from well in the past (back-dating).",
+        },
       },
       required: ['event_type', 'occurred_at'],
     },
   },
   {
     name: 'update_event',
-    description: 'Correct or delete an existing event in the database. Use this when the user says an event was logged incorrectly — wrong type, wrong time, or it shouldn\'t have been logged at all. First call get_usage_stats to find the event ID, then call this to fix it. Tell the user what you changed.',
+    description: 'Correct or delete an existing event in the database. Use this when the user says an event was logged incorrectly — wrong type, wrong time, wrong trigger, or it shouldn\'t have been logged at all. First call get_usage_stats to find the event ID, then call this to fix it. Tell the user what you changed.',
     input_schema: {
       type: 'object',
       properties: {
@@ -291,7 +314,7 @@ const AGENT_TOOLS = [
         },
         event_type: {
           type: 'string',
-          enum: ['cigarette', 'urge_resisted', 'urge_gave_in', 'milestone'],
+          enum: ['cigarette', 'urge', 'urge_resisted', 'urge_gave_in', 'decision', 'milestone'],
           description: 'New event type (for update only)',
         },
         occurred_at: {
@@ -301,6 +324,16 @@ const AGENT_TOOLS = [
         notes: {
           type: 'string',
           description: 'Updated notes (for update only)',
+        },
+        trigger: {
+          type: 'object',
+          description: 'Corrected trigger metadata (for update only) — same shape as in log_event.',
+          properties: {
+            category: { type: 'string', enum: ['location', 'activity', 'emotion', 'oral', 'social', 'time'] },
+            label: { type: 'string' },
+            confidence: { type: 'number' },
+            source: { type: 'string', enum: ['conversation', 'quick_log', 'extraction', 'retroactive'] },
+          },
         },
       },
       required: ['event_id', 'action'],
@@ -408,7 +441,7 @@ async function buildLastEventAwareness(rawUserId, timezone = DEFAULT_TZ) {
 async function mirrorActivityToEvents(rawUserId, updates, timezone = DEFAULT_TZ) {
   if (!supabase || !updates || !Array.isArray(updates.activity_log)) return;
   const userId = resolveUserId(rawUserId);
-  const TYPE_MAP = { smoke: 'cigarette', resist: 'urge_resisted' };
+  const TYPE_MAP = { smoke: 'cigarette', resist: 'urge_resisted', craving: 'urge', decision: 'decision' };
 
   for (const ev of updates.activity_log) {
     const eventType = TYPE_MAP[ev?.type];
@@ -457,8 +490,11 @@ function summarizeEvents(events) {
     cigarette_count: cigarettes.length,
     last_cigarette_at: lastCigarette?.occurred_at || null,
     minutes_since_last_cigarette: gapMinutes,
+    urges_live: events.filter(e => e.event_type === 'urge').length,
     urges_resisted: events.filter(e => e.event_type === 'urge_resisted').length,
     urges_gave_in: events.filter(e => e.event_type === 'urge_gave_in').length,
+    decisions: events.filter(e => e.event_type === 'decision').length,
+    milestones: events.filter(e => e.event_type === 'milestone').length,
   };
 }
 
@@ -519,7 +555,7 @@ async function recallConversation(rawUserId, query, date) {
 }
 
 /** Shared correct/delete logic for the text tool and the voice /events/update endpoint. */
-async function updateEvent(userId, { event_id, action, event_type, occurred_at, notes } = {}) {
+async function updateEvent(userId, { event_id, action, event_type, occurred_at, notes, trigger, source } = {}) {
   if (!supabase) return { error: 'Event store unavailable' };
   if (!event_id || !action) return { error: 'event_id and action required' };
 
@@ -531,7 +567,23 @@ async function updateEvent(userId, { event_id, action, event_type, occurred_at, 
   const updates = {};
   if (event_type) updates.event_type = event_type;
   if (occurred_at) updates.occurred_at = occurred_at;
-  if (notes !== undefined && notes !== '') updates.metadata = { notes };
+
+  // Metadata fields are merged, not replaced — overwriting the whole object
+  // here would silently wipe a previously-set trigger/source whenever the
+  // user just corrects the notes.
+  if (notes !== undefined || trigger !== undefined || source !== undefined) {
+    const { data: existing } = await supabase
+      .from('bb_events')
+      .select('metadata')
+      .eq('id', event_id)
+      .eq('user_id', userId)
+      .single();
+    const metadata = { ...(existing?.metadata || {}) };
+    if (notes !== undefined && notes !== '') metadata.notes = notes;
+    if (trigger !== undefined) metadata.trigger = trigger;
+    if (source !== undefined) metadata.source = source;
+    updates.metadata = metadata;
+  }
 
   const { error } = await supabase.from('bb_events').update(updates).eq('id', event_id).eq('user_id', userId);
   return error ? { error: error.message } : { ok: true, updated: event_id, changes: updates };
@@ -571,11 +623,13 @@ async function executeToolUse(toolUse, userId, timezone = DEFAULT_TZ) {
     if (!supabase) {
       return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ error: 'Event store unavailable' }), is_error: true };
     }
-    const { event_type, occurred_at, notes, milestone_label } = toolUse.input || {};
+    const { event_type, occurred_at, notes, milestone_label, trigger, source } = toolUse.input || {};
 
     const metadata = {};
     if (notes) metadata.notes = notes;
     if (milestone_label) metadata.label = milestone_label;
+    if (trigger) metadata.trigger = trigger;
+    metadata.source = source || 'conversation';
 
     const { data, error } = await supabase
       .from('bb_events')
@@ -599,8 +653,8 @@ async function executeToolUse(toolUse, userId, timezone = DEFAULT_TZ) {
   }
 
   if (toolUse.name === 'update_event') {
-    const { event_id, action, event_type, occurred_at, notes } = toolUse.input || {};
-    const result = await updateEvent(userId, { event_id, action, event_type, occurred_at, notes });
+    const { event_id, action, event_type, occurred_at, notes, trigger } = toolUse.input || {};
+    const result = await updateEvent(userId, { event_id, action, event_type, occurred_at, notes, trigger });
     return {
       type: 'tool_result',
       tool_use_id: toolUse.id,

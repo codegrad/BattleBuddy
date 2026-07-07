@@ -1241,7 +1241,8 @@ TIME-OF-DAY PATTERNS — RISK WINDOWS:
 ACTIVITY LOG — THE CHRONOLOGICAL TIMELINE (CRITICAL):
 Every concrete activity, event, cigarette, resist, meal, gym session, work block, or mood the user reports must be captured as an activity_log entry.
 - Format: { "time": "6:35 AM", "date": "${localDate}", "event": "had first cigarette of the day", "type": "smoke", "verified": true }
-- type is one of: smoke, resist, craving, gym, work, meal, sleep, mood, social, other
+- type is one of: smoke, resist, craving, decision, gym, work, meal, sleep, mood, social, other
+- Use "decision" when the user describes a CONSCIOUS CHOICE to smoke — not a slip, not giving in to an urge. Never use "smoke" for a decision; the distinction matters to the user.
 - "verified": true if the user explicitly stated the time, false if estimated from context
 - Use the user's EXACT words for the event when possible.
 - ALWAYS include the time. If the user didn't state a time, use the current local time provided above BUT set verified to false.
