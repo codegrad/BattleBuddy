@@ -142,16 +142,15 @@
   <section class="tab on" id="tab-prompt">
     <div class="toolbar">
       <button class="btn primary" id="p-save">Save</button>
-      <button class="btn" id="p-commit" title="Save, then git commit + push so the edit survives redeploys">Save &amp; Commit</button>
       <button class="btn" id="p-reset" title="Reload the live version, discarding edits">Reset</button>
       <button class="btn" id="p-diff-toggle">Show diff</button>
-      <div class="meta"><b id="p-chars">0</b> chars · <span id="p-dirty">saved</span></div>
+      <div class="meta"><span id="p-diverged" title="The live prompt contains console edits that aren't in git — bring them into the repo in a dev session when convenient" style="display:none">console-edited · </span><b id="p-chars">0</b> chars · <span id="p-dirty">saved</span></div>
     </div>
     <div id="prompt-split">
       <textarea id="prompt-text" spellcheck="false"></textarea>
       <div id="diff-pane"><h3>Changes vs live version</h3><div id="diff-body"></div></div>
     </div>
-    <footer class="note">Saves go live on the next agent turn (the prompt is read fresh per request) but revert on the next deploy — use <b>Save &amp; Commit</b> to make an edit permanent. A backup of the previous version is kept on the volume before every save.</footer>
+    <footer class="note">Saves go live on the next agent turn and persist across deploys (stored on the volume, restored on boot). Exception: if a code deploy ships a <em>different</em> prompt (e.g. a design-loop commit), the repo version wins and your console edit is archived on the volume under <span style="font-family:var(--mono)">prompt-live/</span>. A backup of the previous version is also kept before every save.</footer>
   </section>
 
   <!-- ─── Resources ─── -->
@@ -227,12 +226,13 @@ function status(msg, cls = '') {
 async function unlock(candidate) {
   secret = candidate;
   try {
-    const { content } = await api('/admin/console/prompt');
+    const { content, divergedFromRepo } = await api('/admin/console/prompt');
     sessionStorage.setItem('bb-admin-secret', secret);
     $('gate').style.display = 'none';
     $('hdr').style.display = 'flex';
     $('mn').style.display = 'flex';
     initPrompt(content);
+    setDiverged(divergedFromRepo);
     loadResources();
     loadDirectives();
     loadInsights();
@@ -270,11 +270,14 @@ function refreshPromptMeta() {
 let diffDebounce;
 ta.addEventListener('input', () => { clearTimeout(diffDebounce); diffDebounce = setTimeout(refreshPromptMeta, 250); });
 
-async function savePrompt(commit) {
-  const btn = commit ? $('p-commit') : $('p-save');
+function setDiverged(flag) {
+  $('p-diverged').style.display = flag ? '' : 'none';
+}
+async function savePrompt() {
+  const btn = $('p-save');
   btn.disabled = true;
   try {
-    let body = { content: ta.value, commit };
+    let body = { content: ta.value };
     let data;
     try {
       data = await api('/admin/console/prompt', { method: 'POST', body: JSON.stringify(body) });
@@ -286,20 +289,19 @@ async function savePrompt(commit) {
     }
     liveVersion = ta.value;
     refreshPromptMeta();
-    if (commit && data.committed) status('Saved, committed and pushed — permanent.', 'ok');
-    else if (commit) status(`Saved live, but commit failed: ${data.commitError}`, 'err');
-    else status(`Saved — live on the next turn (${data.chars.toLocaleString()} chars).`, 'ok');
+    setDiverged(data.divergedFromRepo);
+    status(`Saved — live on the next turn, persists across deploys (${data.chars.toLocaleString()} chars).`, 'ok');
   } catch (e) {
     status('Save failed: ' + e.message, 'err');
   } finally { btn.disabled = false; }
 }
-$('p-save').onclick = () => savePrompt(false);
-$('p-commit').onclick = () => savePrompt(true);
+$('p-save').onclick = () => savePrompt();
 $('p-reset').onclick = async () => {
   if (ta.value !== liveVersion && !confirm('Discard your unsaved edits and reload the live version?')) return;
   try {
-    const { content } = await api('/admin/console/prompt');
+    const { content, divergedFromRepo } = await api('/admin/console/prompt');
     initPrompt(content);
+    setDiverged(divergedFromRepo);
     status('Reloaded live version.', 'ok');
   } catch (e) { status(e.message, 'err'); }
 };

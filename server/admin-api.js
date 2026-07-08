@@ -3,9 +3,13 @@
  * (served at GET /admin/console) without a coding session:
  *
  *   - System prompt: view/edit server/prompts/system.battlebuddy.md. Writes go
- *     live on the next turn (the prompt is read fresh per request). An edit
- *     survives until the next deploy unless committed — POST with commit: true
- *     reuses the agentDesignLoop git pattern to make it durable.
+ *     live on the next turn (the prompt is read fresh per request) AND are
+ *     persisted to the volume, restored on boot so they survive redeploys.
+ *     If a deploy ships a *different* prompt than the one the console edit was
+ *     based on (e.g. a design-loop commit), the repo version wins and the
+ *     console edit is archived on the volume — see restoreConsoleEditOnBoot.
+ *     (Committing from here is impossible: the production image has no git,
+ *     no .git dir, and no credentials — build context is server/ only.)
  *   - Resources: reference documents (research, frameworks) stored on the
  *     Railway volume and injected into every prompt (see buildAdminInjections
  *     in contextAgent.js).
@@ -22,7 +26,7 @@
 import { readFileSync, writeFileSync, readdirSync, unlinkSync, statSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname, basename, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { ADMIN_DATA_ROOT, RESOURCES_DIR, DIRECTIVES_PATH, loadDirectives, isDirectiveActive } from './contextAgent.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -82,14 +86,46 @@ function backupPrompt() {
   }
 }
 
-/** Same pattern as agentDesignLoop.commitAndPush — makes a console edit
- * survive redeploys by pushing it back to the repo Railway deploys from. */
-function commitPromptToGit() {
-  const repoRoot = resolve(__dirname, '..');
-  execSync('git add server/prompts/system.battlebuddy.md', { cwd: repoRoot });
-  execFileSync('git', ['commit', '-m', 'chore: system prompt edited via admin console'], { cwd: repoRoot });
-  execSync('git push origin main', { cwd: repoRoot });
-}
+// ─── Console-edit persistence across deploys ─────────────────────────────────
+// The prompt file lives in the (ephemeral) container image; console saves are
+// mirrored to the volume and restored on boot. Provenance rule: the volume
+// copy remembers the hash of the prompt the image shipped with at save time.
+// If a later deploy ships that same prompt, the console edit is still the
+// newest intent → restore it. If the deploy ships a DIFFERENT prompt (design
+// loop or a dev commit), the repo wins → archive the console edit instead.
+const PROMPT_LIVE_DIR = resolve(ADMIN_DATA_ROOT, 'prompt-live');
+const PROMPT_LIVE_PATH = resolve(PROMPT_LIVE_DIR, 'system.battlebuddy.md');
+const PROMPT_LIVE_META = resolve(PROMPT_LIVE_DIR, 'meta.json');
+
+const sha256 = s => createHash('sha256').update(s).digest('hex');
+
+// Hash of the prompt as shipped in this image — captured at import time,
+// before any restore touches the file.
+const bundledPromptHash = (() => {
+  try { return sha256(readFileSync(systemPromptPath, 'utf-8')); } catch { return null; }
+})();
+
+(function restoreConsoleEditOnBoot() {
+  try {
+    if (!existsSync(PROMPT_LIVE_PATH) || !existsSync(PROMPT_LIVE_META)) return;
+    const meta = JSON.parse(readFileSync(PROMPT_LIVE_META, 'utf-8'));
+    const saved = readFileSync(PROMPT_LIVE_PATH, 'utf-8');
+    if (meta.bundledHash === bundledPromptHash) {
+      if (sha256(saved) !== bundledPromptHash) {
+        writeFileSync(systemPromptPath, saved);
+        console.log(`[AdminConsole] Restored console-edited prompt from volume (saved ${meta.savedAt})`);
+      }
+    } else {
+      const stamp = String(meta.savedAt || new Date().toISOString()).replace(/[:.]/g, '-');
+      writeFileSync(resolve(PROMPT_LIVE_DIR, `superseded-${stamp}.md`), saved);
+      unlinkSync(PROMPT_LIVE_PATH);
+      unlinkSync(PROMPT_LIVE_META);
+      console.warn(`[AdminConsole] Deploy shipped a newer prompt — repo version wins; console edit archived as superseded-${stamp}.md`);
+    }
+  } catch (e) {
+    console.warn('[AdminConsole] Prompt restore skipped:', e.message);
+  }
+})();
 
 export async function handleAdminConsole(req, res, { checkAdminSecret, CORS, send401, runTranscriptAudit, fetchAuditReports }) {
   const url = req.url.split('?')[0];
@@ -112,11 +148,15 @@ export async function handleAdminConsole(req, res, { checkAdminSecret, CORS, sen
     // ─── System prompt ────────────────────────────────────────────────────
     if (req.method === 'GET' && url === '/admin/console/prompt') {
       const content = readFileSync(systemPromptPath, 'utf-8');
-      return json(res, CORS, 200, { content, chars: content.length });
+      return json(res, CORS, 200, {
+        content,
+        chars: content.length,
+        divergedFromRepo: !!bundledPromptHash && sha256(content) !== bundledPromptHash,
+      });
     }
 
     if (req.method === 'POST' && url === '/admin/console/prompt') {
-      const { content, commit, force } = JSON.parse(await readBody(req));
+      const { content, force } = JSON.parse(await readBody(req));
       if (typeof content !== 'string' || content.trim().length < 200) {
         return json(res, CORS, 400, { error: 'Prompt content missing or suspiciously short — refusing to save.' });
       }
@@ -129,20 +169,15 @@ export async function handleAdminConsole(req, res, { checkAdminSecret, CORS, sen
       }
       backupPrompt();
       writeFileSync(systemPromptPath, content);
-      console.log(`[AdminConsole] System prompt saved (${content.length} chars) — live on next turn`);
-
-      let committed = false, commitError = null;
-      if (commit) {
-        try {
-          commitPromptToGit();
-          committed = true;
-          console.log('[AdminConsole] Prompt edit committed and pushed');
-        } catch (e) {
-          commitError = e.message;
-          console.warn('[AdminConsole] Prompt git commit failed:', e.message);
-        }
-      }
-      return json(res, CORS, 200, { ok: true, chars: content.length, committed, commitError });
+      mkdirSync(PROMPT_LIVE_DIR, { recursive: true });
+      writeFileSync(PROMPT_LIVE_PATH, content);
+      writeFileSync(PROMPT_LIVE_META, JSON.stringify({ savedAt: new Date().toISOString(), bundledHash: bundledPromptHash }, null, 2));
+      console.log(`[AdminConsole] System prompt saved (${content.length} chars) — live on next turn, persisted to volume`);
+      return json(res, CORS, 200, {
+        ok: true,
+        chars: content.length,
+        divergedFromRepo: !!bundledPromptHash && sha256(content) !== bundledPromptHash,
+      });
     }
 
     // ─── Resources ────────────────────────────────────────────────────────

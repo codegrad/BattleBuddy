@@ -4,6 +4,16 @@ A running log of significant product/architecture decisions and deviations from 
 
 ---
 
+## 2026-07-08 — Console prompt edits persist via volume restore, not git
+
+**Problem.** The admin console's "Save & Commit" failed in production: the bb-server image (build context `server/`, `node:20-slim`) has no git binary, no `.git` dir, and no credentials. The design loop's commit+push works only because it runs on Mike's machine, not on Railway.
+
+**Decision.** Dropped Save & Commit. Every console save now writes the prompt to the container file (instant hot-reload) AND mirrors it to `/data/prompt-live/` with the sha256 of the prompt the running image shipped with. On boot (admin-api.js import), if the image's prompt hash matches the recorded one, the console edit is restored — it survives redeploys of the same prompt. If a deploy ships a *different* prompt (design-loop commit, dev change), the repo wins and the console edit is archived as `prompt-live/superseded-<ts>.md`, never silently lost. The console shows a "console-edited" marker whenever the live prompt differs from the repo version, as a reminder to fold edits back into git during a dev session.
+
+**Rejected.** Installing git + shipping the repo and a PAT into the image (fat image, credentials in container, and server-side pushes to one mirror would diverge the strangepair/codegrad dual-push setup); GitHub Contents-API commits (same divergence problem).
+
+---
+
 ## 2026-07-06 — UX & agent-experience roadmap adopted; gamification = personal records, not live streaks
 
 **Decision.** Adopted `docs/08-UX-AGENT-EXPERIENCE-PLAN.md` as the sequencing source of truth for post-MVP work: trust/reliability fixes → `bb_events` taxonomy v2 (adds `urge` + `decision` types, structured trigger metadata, `source` incl. `retroactive`) → proactive engagement v1 (risk-window sweep made live behind an engagement window; self-initiated vs prompted logged distinctly) → personal records + Journey dashboard.
