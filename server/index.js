@@ -1894,12 +1894,11 @@ Return ONLY the JSON object, no markdown, no explanation.`;
     }
   }
 
-  // ─── Admin panel ────────────────────────────────────────────────────────────
-  // ─── Admin console (system prompt / resources / directives) ────────────────
+  // ─── Admin console (prompt / resources / directives / insights) ────────────
   // Full route handling lives in admin-api.js; every data route inside is
   // guarded by checkAdminSecret (the HTML shell is open, same as /admin below).
   if (req.url === '/admin/console' || req.url.startsWith('/admin/console/')) {
-    return handleAdminConsole(req, res, { checkAdminSecret, CORS, send401 });
+    return handleAdminConsole(req, res, { checkAdminSecret, CORS, send401, runTranscriptAudit, fetchAuditReports });
   }
 
   // The shell itself carries no data — a plain browser navigation can't attach
@@ -2096,7 +2095,30 @@ function loadRecentSessions(userId, { cutoffMs, limit = 12, minMessages = 4 } = 
     .slice(0, limit);
 }
 
-async function runTranscriptAudit(sinceMs = Date.now() - 26 * 3600 * 1000) {
+/** Recent transcript-audit reports from bb_events, newest first — the admin
+ * console's Insights tab reads improvement recommendations from these. */
+async function fetchAuditReports(limit = 15) {
+  if (!supabase) return { error: 'event store not configured', reports: [] };
+  const { data, error } = await supabase
+    .from('bb_events')
+    .select('id, user_id, occurred_at, metadata')
+    .eq('event_type', 'transcript_audit')
+    .order('occurred_at', { ascending: false })
+    .limit(limit);
+  if (error) return { error: error.message, reports: [] };
+  return {
+    reports: (data || []).map(row => ({
+      id: row.id,
+      userId: row.user_id,
+      occurredAt: row.occurred_at,
+      source: row.metadata?.source || 'nightly_audit',
+      sessionsAudited: row.metadata?.sessions_audited || [],
+      report: row.metadata?.report || null,
+    })),
+  };
+}
+
+async function runTranscriptAudit(sinceMs = Date.now() - 26 * 3600 * 1000, source = 'nightly_audit') {
   if (!supabase) return { error: 'event store not configured' };
   const storeDir = process.env.CONTEXT_STORE_DIR || resolve(__dirname, 'context-store');
   const transcriptsRoot = resolve(storeDir, 'session-transcripts');
@@ -2163,7 +2185,7 @@ Transcripts:${corpus}`,
         event_type: 'transcript_audit',
         occurred_at: new Date().toISOString(),
         metadata: {
-          source: 'nightly_audit',
+          source,
           sessions_audited: sessions.map(s => s.sessionId),
           report,
         },

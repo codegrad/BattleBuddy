@@ -11,6 +11,8 @@
  *     in contextAgent.js).
  *   - Directives: short behavioral instructions with optional expiry dates,
  *     injected above the persona so they override conflicting guidance.
+ *   - Insights: transcript-audit reports (wins/failures/proposals with
+ *     verbatim evidence) read from bb_events, plus an on-demand analysis run.
  *
  * All data routes require the x-bb-admin-secret header (checkAdminSecret is
  * passed in from index.js). Only the HTML shell is open — same rationale as
@@ -89,7 +91,7 @@ function commitPromptToGit() {
   execSync('git push origin main', { cwd: repoRoot });
 }
 
-export async function handleAdminConsole(req, res, { checkAdminSecret, CORS, send401 }) {
+export async function handleAdminConsole(req, res, { checkAdminSecret, CORS, send401, runTranscriptAudit, fetchAuditReports }) {
   const url = req.url.split('?')[0];
 
   if (req.method === 'OPTIONS') {
@@ -214,6 +216,24 @@ export async function handleAdminConsole(req, res, { checkAdminSecret, CORS, sen
       saveDirectives([...loadDirectives(), directive]);
       console.log(`[AdminConsole] Directive added: "${trimmed.slice(0, 60)}"${expires ? ` (expires ${expires})` : ''}`);
       return json(res, CORS, 200, { ok: true, directive: { ...directive, active: isDirectiveActive(directive) } });
+    }
+
+    // ─── Insights (transcript-audit recommendations) ──────────────────────
+    // Reuses the existing audit engine (runTranscriptAudit in index.js) —
+    // one analysis pipeline, surfaced here so Mike can read the reports and
+    // trigger a fresh pass without waiting for the hourly sweep.
+    if (req.method === 'GET' && url === '/admin/console/insights') {
+      return json(res, CORS, 200, await fetchAuditReports(15));
+    }
+
+    if (req.method === 'POST' && url === '/admin/console/insights/run') {
+      const body = await readBody(req);
+      const { days } = body ? JSON.parse(body) : {};
+      const windowDays = Math.min(Math.max(Number(days) || 1, 1), 30);
+      const sinceMs = Date.now() - windowDays * 24 * 3600 * 1000;
+      console.log(`[AdminConsole] On-demand transcript analysis over last ${windowDays} day(s)`);
+      const result = await runTranscriptAudit(sinceMs, 'admin_console');
+      return json(res, CORS, 200, { ...result, windowDays });
     }
 
     const directiveMatch = url.match(/^\/admin\/console\/directives\/([\w-]+)$/);

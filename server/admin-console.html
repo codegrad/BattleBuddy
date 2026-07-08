@@ -81,6 +81,26 @@
   label.filebtn { font-size: 12px; color: var(--dim); cursor: pointer; text-decoration: underline; align-self: flex-start; }
   label.filebtn:hover { color: var(--text); }
 
+  /* Insights */
+  #tab-insights { flex-direction: column; overflow: hidden; }
+  #ins-scroll { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; max-width: 900px; width: 100%; margin: 0 auto; }
+  .report { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  .report summary { list-style: none; cursor: pointer; padding: 12px 14px; display: flex; align-items: baseline; gap: 10px; }
+  .report summary::-webkit-details-marker { display: none; }
+  .report summary .when { font-size: 13px; font-weight: 600; flex-shrink: 0; }
+  .report summary .gist { font-size: 12.5px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .report[open] summary .gist { white-space: normal; }
+  .report .body { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 12px; }
+  .rep-sec h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin-bottom: 6px; }
+  .rep-sec ul { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .rep-sec li { font-size: 12.5px; line-height: 1.5; padding: 7px 10px; border-radius: 6px; background: var(--panel2); border-left: 3px solid var(--border); }
+  .rep-sec.proposals li { border-left-color: var(--accent); }
+  .rep-sec.fails li { border-left-color: var(--red); }
+  .rep-sec.wins li { border-left-color: var(--green); }
+  .rep-sec p { font-size: 12.5px; line-height: 1.55; color: var(--text); }
+  .rep-summary { font-size: 13px; line-height: 1.5; padding: 10px 12px; border-radius: 6px; background: rgba(232,98,74,.1); border: 1px solid rgba(232,98,74,.35); }
+  select { background: var(--panel2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 6px 8px; font-size: 12.5px; font-family: inherit; }
+
   /* Auth gate */
   #gate { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 10; }
   #gate .box { display: flex; flex-direction: column; gap: 12px; width: 320px; }
@@ -107,6 +127,7 @@
     <button data-tab="prompt" class="on">Prompt</button>
     <button data-tab="resources">Resources</button>
     <button data-tab="directives">Directives</button>
+    <button data-tab="insights">Insights</button>
   </nav>
   <div id="status"></div>
 </header>
@@ -159,6 +180,22 @@
     </div>
   </section>
 
+  <!-- ─── Insights ─── -->
+  <section class="tab" id="tab-insights">
+    <div class="toolbar">
+      <select id="ins-days">
+        <option value="1">Last 24 hours</option>
+        <option value="3">Last 3 days</option>
+        <option value="7" selected>Last 7 days</option>
+        <option value="14">Last 14 days</option>
+        <option value="30">Last 30 days</option>
+      </select>
+      <button class="btn primary" id="ins-run">Analyze sessions</button>
+      <div class="meta" id="ins-note">Reads the transcripts and produces evidence-based recommendations — takes about a minute.</div>
+    </div>
+    <div id="ins-scroll"></div>
+  </section>
+
 </main>
 
 <script>
@@ -193,6 +230,7 @@ async function unlock(candidate) {
     initPrompt(content);
     loadResources();
     loadDirectives();
+    loadInsights();
   } catch (e) {
     sessionStorage.removeItem('bb-admin-secret');
     $('gate-err').textContent = e.message === 'Unauthorized' ? 'Wrong secret.' : e.message;
@@ -406,6 +444,62 @@ async function loadDirectives() {
     });
   } catch (e) { status('Failed to load directives: ' + e.message, 'err'); }
 }
+// ─── Insights tab ────────────────────────────────────────────────────────────
+function repSection(title, items, cls = '') {
+  if (!items || !items.length) return '';
+  return `<div class="rep-sec ${cls}"><h4>${title}</h4><ul>${items.map(i => `<li>${escapeHtml(typeof i === 'string' ? i : JSON.stringify(i))}</li>`).join('')}</ul></div>`;
+}
+async function loadInsights() {
+  try {
+    const { reports, error } = await api('/admin/console/insights');
+    const el = $('ins-scroll');
+    if (error) { el.innerHTML = `<div class="empty">${escapeHtml(error)}</div>`; return; }
+    if (!reports.length) { el.innerHTML = '<div class="empty">No analysis reports yet. The hourly sweep creates one whenever there are new sessions, or run one now.</div>'; return; }
+    el.innerHTML = reports.map((r, idx) => {
+      const rep = r.report || {};
+      const mem = rep.memory_performance || {};
+      const when = new Date(r.occurredAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      return `<details class="report" ${idx === 0 ? 'open' : ''}>
+        <summary>
+          <span class="when">${when}</span>
+          <span class="gist">${escapeHtml(rep.summary || 'No summary')}</span>
+          <span class="badge" style="margin-left:auto">${r.source === 'admin_console' ? 'manual' : 'auto'} · ${(r.sessionsAudited || []).length} session(s)</span>
+        </summary>
+        <div class="body">
+          ${rep.summary ? `<div class="rep-summary">${escapeHtml(rep.summary)}</div>` : ''}
+          ${repSection('Recommendations', rep.proposals, 'proposals')}
+          ${repSection('What failed', rep.agent_failures, 'fails')}
+          ${repSection('What worked', rep.agent_wins, 'wins')}
+          ${repSection('App issues', rep.app_issues)}
+          ${repSection(`Memory performance${mem.score !== undefined ? ` — score ${escapeHtml(String(mem.score))}/10` : ''}`, [...(mem.probes || []), ...(mem.chronology_errors || [])])}
+          ${rep.user_state ? `<div class="rep-sec"><h4>User state</h4><p>${escapeHtml(rep.user_state)}</p></div>` : ''}
+          ${rep.raw ? `<div class="rep-sec"><h4>Raw output</h4><p>${escapeHtml(rep.raw)}</p></div>` : ''}
+        </div>
+      </details>`;
+    }).join('');
+  } catch (e) { status('Failed to load insights: ' + e.message, 'err'); }
+}
+$('ins-run').onclick = async () => {
+  const btn = $('ins-run');
+  btn.disabled = true;
+  const note = $('ins-note');
+  note.textContent = 'Analyzing… this reads every recent session and takes about a minute.';
+  try {
+    const { audited, windowDays, error } = await api('/admin/console/insights/run', { method: 'POST', body: JSON.stringify({ days: $('ins-days').value }) });
+    if (error) throw new Error(error);
+    if (!audited || !audited.length) {
+      note.textContent = `No sessions found in the last ${windowDays} day(s).`;
+    } else {
+      note.textContent = `Analyzed ${audited.reduce((n, a) => n + a.sessions, 0)} session(s) across ${audited.length} user(s).`;
+      status('Analysis complete.', 'ok');
+    }
+    loadInsights();
+  } catch (e) {
+    note.textContent = 'Analysis failed.';
+    status(e.message, 'err');
+  } finally { btn.disabled = false; }
+};
+
 $('dir-add').onclick = async () => {
   try {
     await api('/admin/console/directives', { method: 'POST', body: JSON.stringify({ text: $('dir-text').value, expires: $('dir-expires').value || null }) });
