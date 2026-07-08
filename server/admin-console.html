@@ -93,7 +93,11 @@
   .report .body { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 12px; }
   .rep-sec h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin-bottom: 6px; }
   .rep-sec ul { list-style: none; display: flex; flex-direction: column; gap: 6px; }
-  .rep-sec li { font-size: 12.5px; line-height: 1.5; padding: 7px 10px; border-radius: 6px; background: var(--panel2); border-left: 3px solid var(--border); }
+  .rep-sec li { font-size: 12.5px; line-height: 1.5; padding: 7px 10px; border-radius: 6px; background: var(--panel2); border-left: 3px solid var(--border); display: flex; gap: 10px; align-items: flex-start; }
+  .rep-sec li .ptext { flex: 1; }
+  .rep-sec li .apply { flex-shrink: 0; font-size: 11px; padding: 3px 8px; }
+  #dir-count { font-size: 11px; color: var(--dim); text-align: right; }
+  #dir-count.over { color: var(--red); }
   .rep-sec.proposals li { border-left-color: var(--accent); }
   .rep-sec.fails li { border-left-color: var(--red); }
   .rep-sec.wins li { border-left-color: var(--green); }
@@ -172,6 +176,7 @@
       <div class="add-form">
         <h3>Add directive</h3>
         <textarea id="dir-text" placeholder="Short behavioral instruction, e.g. “Lead with breathing exercises before anything else this week.”" style="min-height:60px; resize:vertical;"></textarea>
+        <div id="dir-count"></div>
         <div class="frow">
           <input type="date" id="dir-expires" title="Optional — directive auto-expires at the end of this day (Central time)">
           <button class="btn primary" id="dir-add">Add directive</button>
@@ -447,7 +452,10 @@ async function loadDirectives() {
 // ─── Insights tab ────────────────────────────────────────────────────────────
 function repSection(title, items, cls = '') {
   if (!items || !items.length) return '';
-  return `<div class="rep-sec ${cls}"><h4>${title}</h4><ul>${items.map(i => `<li>${escapeHtml(typeof i === 'string' ? i : JSON.stringify(i))}</li>`).join('')}</ul></div>`;
+  const applyBtn = cls === 'proposals' ? '<button class="btn apply" title="Copy into the directive form for review">→ Directive</button>' : '';
+  return `<div class="rep-sec ${cls}"><h4>${title}</h4><ul>${items.map(i =>
+    `<li><span class="ptext">${escapeHtml(typeof i === 'string' ? i : JSON.stringify(i))}</span>${applyBtn}</li>`
+  ).join('')}</ul></div>`;
 }
 async function loadInsights() {
   try {
@@ -477,6 +485,18 @@ async function loadInsights() {
         </div>
       </details>`;
     }).join('');
+    // Human-in-the-loop by design: the button pre-fills the directive form
+    // for review instead of creating the directive directly.
+    el.querySelectorAll('.apply').forEach(btn => btn.onclick = () => {
+      const text = btn.closest('li').querySelector('.ptext').textContent
+        .replace(/^\s*(HIGH|MEDIUM|LOW)\s*CONFIDENCE\s*[—:–-]+\s*/i, '').trim();
+      document.querySelector('nav button[data-tab="directives"]').click();
+      const dt = $('dir-text');
+      dt.value = text;
+      dt.dispatchEvent(new Event('input'));
+      dt.focus();
+      status('Recommendation copied — trim if needed, then Add directive.', 'ok');
+    });
   } catch (e) { status('Failed to load insights: ' + e.message, 'err'); }
 }
 $('ins-run').onclick = async () => {
@@ -500,11 +520,19 @@ $('ins-run').onclick = async () => {
   } finally { btn.disabled = false; }
 };
 
+const DIR_MAX = 500;
+$('dir-text').addEventListener('input', () => {
+  const n = $('dir-text').value.trim().length;
+  const el = $('dir-count');
+  el.textContent = n ? `${n} / ${DIR_MAX}` : '';
+  el.classList.toggle('over', n > DIR_MAX);
+});
 $('dir-add').onclick = async () => {
   try {
     await api('/admin/console/directives', { method: 'POST', body: JSON.stringify({ text: $('dir-text').value, expires: $('dir-expires').value || null }) });
     status('Directive added — live on the next turn.', 'ok');
     $('dir-text').value = ''; $('dir-expires').value = '';
+    $('dir-text').dispatchEvent(new Event('input'));
     loadDirectives();
   } catch (e) { status(e.message, 'err'); }
 };
