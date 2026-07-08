@@ -2183,6 +2183,7 @@ Return JSON only:
     "score": "0-10 rating of BB's memory accuracy and chronological confidence across these sessions, judged only on evidence above"
   },
   "user_state": "one-paragraph read of where this user is in their quit journey based on these sessions",
+  "performance_score": "0-10 overall rating of BB's performance across these sessions — weigh trustworthiness (no fabricated facts), memory accuracy, tone fit, and whether interventions actually helped; judged only on evidence above. Be consistent run to run: 5 = mixed, 8+ = reliably good, below 4 = actively eroding trust",
   "summary": "2-3 sentences: the single most important thing the developer should act on"
 }
 ${adminFeedback ? `\nThe developer reviews every proposal in an admin console. His verdicts on past proposals — calibrate to them:\n${adminFeedback}\n` : ''}

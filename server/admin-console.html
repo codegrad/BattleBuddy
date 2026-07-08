@@ -314,12 +314,15 @@ async function loadDashboard() {
     const d = await api('/admin/console/dashboard');
     const last7 = d.eventsByDay.slice(-7);
     const sum = (arr, k) => arr.reduce((n, x) => n + x[k], 0);
-    const latestScore = d.memoryScores.length ? d.memoryScores[d.memoryScores.length - 1].score : null;
+    const latestOf = arr => arr.length ? arr[arr.length - 1].score : null;
+    const latestScore = latestOf(d.memoryScores);
+    const latestPerf = latestOf(d.performanceScores);
 
     const stats = [
       { v: sum(last7, 'sessions'), l: 'Sessions · 7d' },
       { v: sum(last7, 'resisted'), l: 'Urges resisted · 7d' },
       { v: sum(last7, 'cigarettes'), l: 'Cigarettes · 7d' },
+      { v: latestPerf !== null ? `${latestPerf}<small>/10</small>` : '—', l: 'Agent score' },
       { v: latestScore !== null ? `${latestScore}<small>/10</small>` : '—', l: 'Memory score' },
       { v: d.directives.active, l: 'Active directives' },
       { v: d.prompt.version || '—', l: 'Prompt version' },
@@ -337,9 +340,11 @@ async function loadDashboard() {
       </div>`;
     }).join('');
 
-    const spark = d.memoryScores.slice(-20).map(s =>
-      `<div class="sbar" title="${new Date(s.at).toLocaleDateString()} — ${s.score}/10" style="height:${s.score * 10}%; background:${s.score >= 7.5 ? 'var(--green)' : s.score >= 5 ? '#d9a13b' : 'var(--red)'}"></div>`
+    const sparkOf = (scores, note = s => '') => scores.slice(-24).map(s =>
+      `<div class="sbar" title="${new Date(s.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} — ${s.score}/10${note(s)}" style="height:${Math.max(5, s.score * 10)}%; background:${s.score >= 7.5 ? 'var(--green)' : s.score >= 5 ? '#d9a13b' : 'var(--red)'}; ${s.derived ? 'opacity:.45' : ''}"></div>`
     ).join('');
+    const perfSpark = sparkOf(d.performanceScores, s => s.derived ? ' (derived from wins/failures — predates explicit scoring)' : '');
+    const memSpark = sparkOf(d.memoryScores);
 
     $('dash').innerHTML = `
       <div class="stats">${stats.map(s => `<div class="stat"><div class="v">${s.v}</div><div class="l">${s.l}</div></div>`).join('')}</div>
@@ -358,9 +363,12 @@ async function loadDashboard() {
             <div class="row"><span class="k">agent.md</span><span class="val">from ${d.designLoop.agentMdSource}</span></div>
             <div class="row"><span class="k">Directives</span><span class="val">${d.directives.active} active / ${d.directives.total}</span></div>
             <div class="row"><span class="k">Resources</span><span class="val">${d.resources.count} injected</span></div>
+            <div class="row"><span class="k">Your feedback</span><span class="val">${d.feedback.applied} applied · ${d.feedback.dismissed} dismissed</span></div>
           </div>
+          <h3 style="margin-top:16px" title="Overall audit rating per run: trust, memory, tone, intervention usefulness. Faded bars are derived from wins/failures (audits before explicit scoring).">Agent performance trend</h3>
+          ${d.performanceScores.length ? `<div class="spark">${perfSpark}</div>` : '<div class="empty" style="padding:8px">No scored audits yet.</div>'}
           <h3 style="margin-top:16px">Memory accuracy trend</h3>
-          ${d.memoryScores.length ? `<div class="spark">${spark}</div>` : '<div class="empty" style="padding:8px">No scored audits yet.</div>'}
+          ${d.memoryScores.length ? `<div class="spark">${memSpark}</div>` : '<div class="empty" style="padding:8px">No scored audits yet.</div>'}
         </div>
         <div class="panel">
           <h3>Latest audit read</h3>

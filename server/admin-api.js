@@ -131,16 +131,42 @@ async function buildDashboard({ fetchDashboardEvents, fetchAuditReports }) {
   }
   const eventsByDay = Object.values(byDay);
 
-  // Agent evolution: memory-accuracy trajectory + latest read from the audits.
+  // Agent evolution: performance + memory trajectories from the audits.
   const { reports } = await fetchAuditReports(30);
+  const num = v => {
+    const m = String(v ?? '').match(/\d+(\.\d+)?/);
+    return m ? Math.min(10, parseFloat(m[0])) : null;
+  };
   const memoryScores = (reports || [])
     .map(r => {
-      const m = String(r.report?.memory_performance?.score ?? '').match(/\d+(\.\d+)?/);
-      return m ? { at: r.occurredAt, score: Math.min(10, parseFloat(m[0])) } : null;
+      const s = num(r.report?.memory_performance?.score);
+      return s !== null ? { at: r.occurredAt, score: s } : null;
     })
     .filter(Boolean)
     .reverse(); // chronological
+
+  // Overall performance: audits now emit an explicit performance_score; for
+  // reports predating it, derive a composite from what they did record —
+  // memory accuracy averaged with the win/(win+failure) ratio.
+  const performanceScores = (reports || [])
+    .map(r => {
+      const rep = r.report || {};
+      const explicit = num(rep.performance_score);
+      if (explicit !== null) return { at: r.occurredAt, score: explicit, derived: false };
+      const wins = (rep.agent_wins || []).length;
+      const fails = (rep.agent_failures || []).length;
+      const parts = [];
+      const mem = num(rep.memory_performance?.score);
+      if (mem !== null) parts.push(mem);
+      if (wins + fails > 0) parts.push(10 * wins / (wins + fails));
+      if (!parts.length) return null;
+      return { at: r.occurredAt, score: Math.round(parts.reduce((a, b) => a + b, 0) / parts.length * 10) / 10, derived: true };
+    })
+    .filter(Boolean)
+    .reverse(); // chronological
+
   const latest = (reports || []).find(r => r.report?.summary);
+  const insightsState = loadInsightsState();
 
   // Profiles (users the agent knows).
   const storeDir = process.env.CONTEXT_STORE_DIR || resolve(__dirname, 'context-store');
@@ -169,6 +195,11 @@ async function buildDashboard({ fetchDashboardEvents, fetchAuditReports }) {
     eventsError: eventsError || null,
     eventsByDay,
     memoryScores,
+    performanceScores,
+    feedback: {
+      applied: Object.keys(insightsState.applied || {}).length,
+      dismissed: Object.keys(insightsState.dismissed || {}).length,
+    },
     latestAudit: latest ? { at: latest.occurredAt, summary: latest.report.summary } : null,
     users,
     totals: { users: users.length, sessions: users.reduce((n, u) => n + u.sessions, 0) },
