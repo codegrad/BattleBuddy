@@ -65,9 +65,6 @@ export default function EndCallOverlay({ onComplete }: EndCallOverlayProps) {
       <Animated.Text style={[styles.message, textStyle]}>
         Call ended
       </Animated.Text>
-      <Animated.Text style={[styles.submessage, textStyle]}>
-        How did it go?
-      </Animated.Text>
     </Animated.View>
   );
 }
@@ -85,10 +82,5 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
     color: Colors.textPrimary,
-  },
-  submessage: {
-    marginTop: 6,
-    fontSize: 15,
-    color: Colors.textSecondary,
   },
 });

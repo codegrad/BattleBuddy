@@ -25,12 +25,10 @@ import { ApiConfig } from '../src/config';
 import EntityBackground from '../src/components/home/EntityBackground';
 import type { MascotState } from '../src/components/mascot';
 import EndCallOverlay from '../src/components/voice/EndCallOverlay';
-import OutcomeCapture from '../src/components/feed/OutcomeCapture';
 import HomeButton from '../src/components/common/HomeButton';
 import EdgeEntrance from '../src/components/common/EdgeEntrance';
 import { useSessionStore } from '../src/stores/sessionStore';
 import { useAuthStore } from '../src/stores/authStore';
-import { recordSessionOutcome } from '../src/services/outcomeRecorder';
 import { Colors, Spacing } from '../src/theme';
 
 // Same state -> color convention as the hub entity and the old mascot:
@@ -75,7 +73,6 @@ export default function SessionVoiceScreen() {
   const [token, setToken] = useState<string | null>(null);
   const [wsUrl, setWsUrl] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
-  const [showOutcome, setShowOutcome] = useState(false);
   const { width: windowWidth } = useWindowDimensions();
   const [entityCenter, setEntityCenter] = useState<{ x: number; y: number } | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -188,11 +185,6 @@ export default function SessionVoiceScreen() {
     setEnding(true);
   }, []);
 
-  const handleEndCallComplete = useCallback(() => {
-    setEnding(false);
-    setShowOutcome(true);
-  }, []);
-
   const goHome = useCallback(() => {
     if (router.canGoBack()) {
       router.back();
@@ -201,21 +193,17 @@ export default function SessionVoiceScreen() {
     }
   }, []);
 
+  const handleEndCallComplete = useCallback(() => {
+    setEnding(false);
+    endSession();
+    goHome();
+  }, [endSession, goHome]);
+
   const handleSwitchToText = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     switchMode('text');
     router.replace('/session-chat');
   }, [switchMode]);
-
-  const handleOutcomeComplete = useCallback(
-    (outcome: 'resisted' | 'gave_in') => {
-      const userId = useAuthStore.getState().user?.id || 'default';
-      recordSessionOutcome(userId, outcome);
-      endSession();
-      goHome();
-    },
-    [endSession, goHome],
-  );
 
   const handleAudioLevel = useCallback((level: number) => {
     setAudioLevel(level);
@@ -321,7 +309,6 @@ export default function SessionVoiceScreen() {
       </SafeAreaView>
 
       {ending && <EndCallOverlay onComplete={handleEndCallComplete} />}
-      {showOutcome && <OutcomeCapture onComplete={handleOutcomeComplete} />}
     </View>
     </EdgeEntrance>
   );
