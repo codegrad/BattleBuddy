@@ -21,7 +21,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execSync, execFileSync } from 'node:child_process';
 import Anthropic from '@anthropic-ai/sdk';
-import { persistPromptLive, ADMIN_DATA_ROOT } from './contextAgent.js';
+import { persistPromptLive, ADMIN_DATA_ROOT, buildInsightsFeedback } from './contextAgent.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -154,6 +154,7 @@ function buildSignalDigest(profiles) {
 // ── Propose design updates ────────────────────────────────────────────────────
 
 async function proposeDesignUpdates(agentMd, digest) {
+  const adminFeedback = buildInsightsFeedback();
   const systemPrompt = `You are a product design meta-agent for BattleBuddy, a smoking/vaping cessation companion app.
 
 Your job: read the current agent design document (agent.md) and a digest of real session signals, then propose specific, targeted updates to agent.md.
@@ -201,7 +202,13 @@ ${digest.recentInsights.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 ${digest.openDesignQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 </open_design_questions>
 
-Propose specific updates to agent.md. For each proposal, include:
+${adminFeedback ? `The admin reviews recommendations in a console; his verdicts on past ones — calibrate proposals to them:
+
+<admin_feedback>
+${adminFeedback}
+</admin_feedback>
+
+` : ''}Propose specific updates to agent.md. For each proposal, include:
 - SECTION: which section of agent.md this affects
 - CONFIDENCE: HIGH / MEDIUM / LOW
 - CHANGE TYPE: add / update / remove

@@ -30,6 +30,7 @@ import { createHash } from 'node:crypto';
 import {
   ADMIN_DATA_ROOT, RESOURCES_DIR, DIRECTIVES_PATH, loadDirectives, isDirectiveActive,
   SYSTEM_PROMPT_PATH, persistPromptLive, promptDivergedFromRepo, USER_ALIASES,
+  loadInsightsState, saveInsightsState, proposalKey,
 } from './contextAgent.js';
 import { runDesignLoop, AGENT_MD_VOLUME_PATH, readAgentMd } from './agentDesignLoop.js';
 
@@ -95,21 +96,9 @@ function addDirective(text, expires) {
   return directive;
 }
 
-// ─── Insights apply-state ─────────────────────────────────────────────────────
-// Recommendations Mike has turned into directives disappear from the Insights
-// list. Keyed by report id + a hash of the ORIGINAL proposal text (he may edit
-// the directive wording), stored on the volume.
-const INSIGHTS_STATE_PATH = resolve(ADMIN_DATA_ROOT, 'insights-state.json');
-const sha256 = s => createHash('sha256').update(s).digest('hex');
-const proposalKey = (reportId, proposalText) => `${reportId}#${sha256(String(proposalText)).slice(0, 16)}`;
-
-function loadInsightsState() {
-  try { return JSON.parse(readFileSync(INSIGHTS_STATE_PATH, 'utf-8')); } catch { return { applied: {} }; }
-}
-function saveInsightsState(state) {
-  mkdirSync(ADMIN_DATA_ROOT, { recursive: true });
-  writeFileSync(INSIGHTS_STATE_PATH, JSON.stringify(state, null, 2));
-}
+// Insights apply/dismiss state lives in contextAgent.js (loadInsightsState &
+// co.) because the audit engine and design loop read it back as calibration
+// feedback for future recommendations.
 
 // ─── Overview dashboard ───────────────────────────────────────────────────────
 
@@ -322,11 +311,12 @@ export async function handleAdminConsole(req, res, { checkAdminSecret, CORS, sen
     // trigger a fresh pass without waiting for the hourly sweep.
     if (req.method === 'GET' && url === '/admin/console/insights') {
       const result = await fetchAuditReports(15);
-      // Hide recommendations already turned into directives.
-      const applied = loadInsightsState().applied || {};
+      // Hide recommendations already turned into directives or dismissed.
+      const state = loadInsightsState();
+      const handled = { ...(state.applied || {}), ...(state.dismissed || {}) };
       for (const r of result.reports || []) {
         if (r.report?.proposals?.length) {
-          r.report.proposals = r.report.proposals.filter(p => !applied[proposalKey(r.id, p)]);
+          r.report.proposals = r.report.proposals.filter(p => !handled[proposalKey(r.id, p)]);
         }
       }
       return json(res, CORS, 200, result);
@@ -341,14 +331,34 @@ export async function handleAdminConsole(req, res, { checkAdminSecret, CORS, sen
       const directive = addDirective(text, expires);
       const state = loadInsightsState();
       state.applied = state.applied || {};
+      // `original` kept alongside the final wording: the diff between what was
+      // proposed and what Mike actually applied is calibration signal for the
+      // next analysis runs (buildInsightsFeedback).
       state.applied[proposalKey(reportId, proposal)] = {
         directiveId: directive.id,
         appliedAt: new Date().toISOString(),
+        original: proposal,
         text: directive.text,
       };
       saveInsightsState(state);
       console.log(`[AdminConsole] Recommendation applied as directive ${directive.id}`);
       return json(res, CORS, 200, { ok: true, directive: { ...directive, active: isDirectiveActive(directive) } });
+    }
+
+    // Dismiss a recommendation: gone from the console, and recorded so future
+    // analysis runs stop proposing things like it.
+    if (req.method === 'POST' && url === '/admin/console/insights/dismiss') {
+      const { reportId, proposal } = JSON.parse(await readBody(req));
+      if (!reportId || !proposal) return json(res, CORS, 400, { error: 'reportId and proposal are required.' });
+      const state = loadInsightsState();
+      state.dismissed = state.dismissed || {};
+      state.dismissed[proposalKey(reportId, proposal)] = {
+        dismissedAt: new Date().toISOString(),
+        text: proposal,
+      };
+      saveInsightsState(state);
+      console.log(`[AdminConsole] Recommendation dismissed: "${String(proposal).slice(0, 60)}"`);
+      return json(res, CORS, 200, { ok: true });
     }
 
     if (req.method === 'POST' && url === '/admin/console/insights/run') {

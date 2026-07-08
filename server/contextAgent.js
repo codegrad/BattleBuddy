@@ -144,6 +144,53 @@ export function persistPromptLive(content) {
   }
 })();
 
+// ─── Insights feedback: the admin's verdicts on past recommendations ────────
+// Applied (possibly reworded) and dismissed recommendations are recorded on
+// the volume. Beyond hiding them in the console, they're injected into the
+// NEXT analysis runs (transcript audit + design loop) so the recommendation
+// engines calibrate to what the admin actually finds useful.
+
+export const INSIGHTS_STATE_PATH = resolve(ADMIN_DATA_ROOT, 'insights-state.json');
+export const proposalKey = (reportId, proposalText) => `${reportId}#${sha256(String(proposalText)).slice(0, 16)}`;
+
+export function loadInsightsState() {
+  try { return JSON.parse(readFileSync(INSIGHTS_STATE_PATH, 'utf-8')); } catch { return { applied: {}, dismissed: {} }; }
+}
+
+export function saveInsightsState(state) {
+  mkdirSync(ADMIN_DATA_ROOT, { recursive: true });
+  writeFileSync(INSIGHTS_STATE_PATH, JSON.stringify(state, null, 2));
+}
+
+const stripConfidencePrefix = s => String(s || '').replace(/^\s*(HIGH|MEDIUM|LOW)\s*CONFIDENCE\s*[—:–-]+\s*/i, '').trim();
+const clip = (s, n = 300) => (String(s).length > n ? String(s).slice(0, n) + '…' : String(s));
+
+/** Prompt block describing the admin's reactions to past recommendations, or
+ * null when there's no history yet. Injected into the analysis prompts. */
+export function buildInsightsFeedback(limit = 10) {
+  const st = loadInsightsState();
+  const byNewest = k => Object.values(st[k] || {}).sort((a, b) => String(b.dismissedAt || b.appliedAt || '').localeCompare(String(a.dismissedAt || a.appliedAt || '')));
+
+  const lines = [];
+  const dismissed = byNewest('dismissed').slice(0, limit);
+  if (dismissed.length) {
+    lines.push('Recommendations the admin DISMISSED as not useful — do not re-propose these or close variants; infer what made them miss:');
+    for (const d of dismissed) lines.push(`- ${clip(stripConfidencePrefix(d.text))}`);
+  }
+  const applied = byNewest('applied').slice(0, limit);
+  const edited = applied.filter(a => a.original && stripConfidencePrefix(a.original) !== a.text);
+  const verbatim = applied.filter(a => !a.original || stripConfidencePrefix(a.original) === a.text);
+  if (edited.length) {
+    lines.push('Recommendations the admin REWORDED before applying — the rewrite shows what he actually wanted; match that framing and scope in future proposals:');
+    for (const a of edited) lines.push(`- PROPOSED: ${clip(stripConfidencePrefix(a.original), 200)}\n  APPLIED AS: ${clip(a.text, 200)}`);
+  }
+  if (verbatim.length) {
+    lines.push('Recommendations the admin applied as-is (these hit the mark):');
+    for (const a of verbatim) lines.push(`- ${clip(a.text, 200)}`);
+  }
+  return lines.length ? lines.join('\n') : null;
+}
+
 // Resources are injected whole, so a few oversized pastes could quietly blow
 // the prompt budget (latency + cost on every turn). Injection stops once the
 // running total passes this; skipped files are logged, and the admin console

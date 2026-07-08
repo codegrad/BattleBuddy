@@ -16,7 +16,7 @@ import { createClient } from '@supabase/supabase-js';
 import WebSocket from 'ws';
 import { AccessToken } from 'livekit-server-sdk';
 import { sendPush, isQuietHours, pickNudgeMessage } from './notifications.js';
-import { analyzeAndUpdate, buildProfileSummary, buildLifeArchitectureSummary, buildCurrentGoal, computeUsageStats, lookupProfileField, loadProfile, seedProfile, mergeProfiles, resolveUserId, saveRawTranscript, appendTranscriptMessages, replaceProfile, persistProfile, findActiveRiskWindow, computeJourneyPhase, buildAdminInjections } from './contextAgent.js';
+import { analyzeAndUpdate, buildProfileSummary, buildLifeArchitectureSummary, buildCurrentGoal, computeUsageStats, lookupProfileField, loadProfile, seedProfile, mergeProfiles, resolveUserId, saveRawTranscript, appendTranscriptMessages, replaceProfile, persistProfile, findActiveRiskWindow, computeJourneyPhase, buildAdminInjections, buildInsightsFeedback } from './contextAgent.js';
 import { handleAdminConsole } from './admin-api.js';
 import { runDesignLoop } from './agentDesignLoop.js';
 import { embedAndStore, retrieveRelevant, isConfigured as isVectorConfigured } from './vectorStore.js';
@@ -2142,6 +2142,10 @@ async function runTranscriptAudit(sinceMs = Date.now() - 26 * 3600 * 1000, sourc
   let userDirs = [];
   try { userDirs = readdirSync(transcriptsRoot); } catch { return { error: 'no transcripts' }; }
 
+  // The admin's verdicts on past recommendations (applied / reworded /
+  // dismissed in the console) steer what gets proposed next.
+  const adminFeedback = buildInsightsFeedback();
+
   const results = [];
   for (const userId of userDirs) {
     try {
@@ -2181,7 +2185,7 @@ Return JSON only:
   "user_state": "one-paragraph read of where this user is in their quit journey based on these sessions",
   "summary": "2-3 sentences: the single most important thing the developer should act on"
 }
-
+${adminFeedback ? `\nThe developer reviews every proposal in an admin console. His verdicts on past proposals — calibrate to them:\n${adminFeedback}\n` : ''}
 Transcripts:${corpus}`,
         }],
       });
