@@ -4,6 +4,16 @@ A running log of significant product/architecture decisions and deviations from 
 
 ---
 
+## 2026-07-08 — Design loop moved into bb-server (no dev-machine dependency)
+
+**Decision.** `agentDesignLoop.js` is now an importable module (`runDesignLoop()`) that bb-server runs in-process: scheduled daily (hourly check, 23h min gap, only when new sessions exist since the last run; first boot seeds state rather than running) and on demand via `POST /admin/console/design-loop/run` / the console's "Run design loop" button. Mike's requirement: operating the product must not depend on his laptop being awake or on a Claude Code session.
+
+**Prod adaptations.** Proposals write to `/data/agent-proposals/`; the applied prompt persists via the volume prompt store (`persistPromptLive` in contextAgent.js — shared with console saves) instead of git; `agent.md` comes from a console-managed volume copy (`GET/POST /admin/console/agent-md`) because the repo file isn't in the image; git commit/push is skipped when `RAILWAY_ENVIRONMENT` is set. CLI behavior on a dev machine is unchanged (repo paths, commit+push), so the repo can still be brought back in sync from a dev session.
+
+**Consequence accepted.** Prod-applied prompt changes are not in git history until someone folds them in from a dev machine; the audit trail in prod is the volume (prompt-backups, agent-proposals, applied summaries via email).
+
+---
+
 ## 2026-07-08 — Console prompt edits persist via volume restore, not git
 
 **Problem.** The admin console's "Save & Commit" failed in production: the bb-server image (build context `server/`, `node:20-slim`) has no git binary, no `.git` dir, and no credentials. The design loop's commit+push works only because it runs on Mike's machine, not on Railway.
