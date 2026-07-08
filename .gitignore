@@ -52,3 +52,6 @@ agent/.venv/
 # User profile data — never commit conversation-derived personal data
 server/context-store/
 server/transcripts/
+
+# Local mirror of the Railway /data volume (admin-console resources/directives)
+server/data/

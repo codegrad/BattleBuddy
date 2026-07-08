@@ -15,7 +15,7 @@
  * so BB can reference when something was learned: "you mentioned this last Tuesday."
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
@@ -41,6 +41,84 @@ try {
 const client = new Anthropic();
 
 const STORE_DIR = process.env.CONTEXT_STORE_DIR || resolve(__dirname, 'context-store');
+
+// ─── Admin console data: resources + behavioral directives ──────────────────
+// Lives at the root of the Railway volume (/data), beside context-store, so it
+// survives redeploys. Local dev falls back to server/data/ (git-ignored).
+export const ADMIN_DATA_ROOT = process.env.RAILWAY_VOLUME_MOUNT_PATH || resolve(__dirname, 'data');
+export const RESOURCES_DIR = resolve(ADMIN_DATA_ROOT, 'resources');
+export const DIRECTIVES_PATH = resolve(ADMIN_DATA_ROOT, 'directives.json');
+
+export function loadDirectives() {
+  try {
+    const list = JSON.parse(readFileSync(DIRECTIVES_PATH, 'utf-8'));
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+/** A date-only expiry ("2026-07-15") keeps the directive active through the
+ * end of that day in the user's timezone — Railway runs UTC, and a directive
+ * expiring "today" must not die at 7 PM Central. No expiry = always active. */
+export function isDirectiveActive(directive, timezone = 'America/Chicago') {
+  if (!directive || !directive.expires) return true;
+  try {
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+    return String(directive.expires) >= today;
+  } catch {
+    return true;
+  }
+}
+
+// Resources are injected whole, so a few oversized pastes could quietly blow
+// the prompt budget (latency + cost on every turn). Injection stops once the
+// running total passes this; skipped files are logged, and the admin console
+// shows per-file sizes so oversized resources are visible.
+const RESOURCE_INJECTION_BUDGET = 60000;
+
+/**
+ * Build the admin-console prompt injections: active behavioral directives
+ * (placed near the top of the system prompt, above the persona) and the
+ * resource library (appended at the end). Read fresh on every prompt build —
+ * same hot-reload contract as the system prompt file itself.
+ */
+export function buildAdminInjections() {
+  let directivesSection = null;
+  const active = loadDirectives().filter(d => isDirectiveActive(d));
+  if (active.length > 0) {
+    directivesSection = '## Current Directives\n'
+      + '(Set by the admin. These override anything below that conflicts with them.)\n'
+      + active.map(d => `- ${d.text}${d.expires ? ` (in effect through ${d.expires})` : ''}`).join('\n');
+  }
+
+  let resourcesSection = null;
+  try {
+    const files = readdirSync(RESOURCES_DIR).filter(f => !f.startsWith('.')).sort();
+    const parts = [];
+    let remaining = RESOURCE_INJECTION_BUDGET;
+    for (const file of files) {
+      let content = '';
+      try { content = readFileSync(resolve(RESOURCES_DIR, file), 'utf-8').trim(); } catch { continue; }
+      if (!content) continue;
+      if (content.length > remaining) {
+        console.warn(`[AdminConsole] Resource "${file}" skipped — over the ${RESOURCE_INJECTION_BUDGET}-char injection budget`);
+        continue;
+      }
+      remaining -= content.length;
+      parts.push(`### ${file.replace(/\.[^.]+$/, '')}\n${content}`);
+    }
+    if (parts.length > 0) {
+      resourcesSection = '## Resources\n'
+        + '(Reference material added by the admin — research, frameworks, coaching approaches. Draw on these where they fit; never recite them.)\n\n'
+        + parts.join('\n\n');
+    }
+  } catch {} // no resources dir yet — nothing to inject
+
+  return { directivesSection, resourcesSection };
+}
 
 /** One-time seed value for voice_preference — the old global voice-config.json,
  * kept on disk but no longer written to once every profile has its own field. */

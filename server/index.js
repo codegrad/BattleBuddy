@@ -16,7 +16,8 @@ import { createClient } from '@supabase/supabase-js';
 import WebSocket from 'ws';
 import { AccessToken } from 'livekit-server-sdk';
 import { sendPush, isQuietHours, pickNudgeMessage } from './notifications.js';
-import { analyzeAndUpdate, buildProfileSummary, buildLifeArchitectureSummary, buildCurrentGoal, computeUsageStats, lookupProfileField, loadProfile, seedProfile, mergeProfiles, resolveUserId, saveRawTranscript, appendTranscriptMessages, replaceProfile, persistProfile, findActiveRiskWindow, computeJourneyPhase } from './contextAgent.js';
+import { analyzeAndUpdate, buildProfileSummary, buildLifeArchitectureSummary, buildCurrentGoal, computeUsageStats, lookupProfileField, loadProfile, seedProfile, mergeProfiles, resolveUserId, saveRawTranscript, appendTranscriptMessages, replaceProfile, persistProfile, findActiveRiskWindow, computeJourneyPhase, buildAdminInjections } from './contextAgent.js';
+import { handleAdminConsole } from './admin-api.js';
 import { embedAndStore, retrieveRelevant, isConfigured as isVectorConfigured } from './vectorStore.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -172,7 +173,7 @@ function buildSystemPrompt(profile, triggerContext, recentHistory, timezone, lif
   const timeContext = `User's local time: ${localTime}.` +
     (triggerContext ? ` ${triggerContext}` : '');
   const systemPromptTemplate = readFileSync(systemPromptPath, 'utf-8');
-  return systemPromptTemplate
+  let prompt = systemPromptTemplate
     .replace('{{current_goal}}', currentGoal || 'Build a living map of this person through observation, not interrogation.')
     .replace('{{profile}}', profile || 'New user — no history yet.')
     .replace('{{trigger_context}}', timeContext)
@@ -180,6 +181,13 @@ function buildSystemPrompt(profile, triggerContext, recentHistory, timezone, lif
     .replace('{{life_architecture}}', lifeArchitecture || 'Not yet discovered — learn through conversation.')
     .replace('{{session_context}}', sessionContext || 'No prior session data.')
     .replace('{{relevant_memories}}', relevantMemories || 'None retrieved for this turn.');
+
+  // Admin-console injections (read fresh per turn, same hot-reload contract
+  // as the prompt file): directives above the persona, resources at the end.
+  const { directivesSection, resourcesSection } = buildAdminInjections();
+  if (directivesSection) prompt = `${directivesSection}\n\n${prompt}`;
+  if (resourcesSection) prompt = `${prompt}\n\n${resourcesSection}`;
+  return prompt;
 }
 
 /**
@@ -1887,6 +1895,13 @@ Return ONLY the JSON object, no markdown, no explanation.`;
   }
 
   // ─── Admin panel ────────────────────────────────────────────────────────────
+  // ─── Admin console (system prompt / resources / directives) ────────────────
+  // Full route handling lives in admin-api.js; every data route inside is
+  // guarded by checkAdminSecret (the HTML shell is open, same as /admin below).
+  if (req.url === '/admin/console' || req.url.startsWith('/admin/console/')) {
+    return handleAdminConsole(req, res, { checkAdminSecret, CORS, send401 });
+  }
+
   // The shell itself carries no data — a plain browser navigation can't attach
   // custom headers, so gating this route would make the page unloadable before
   // its JS ever runs to prompt for the secret. Every route the page actually
