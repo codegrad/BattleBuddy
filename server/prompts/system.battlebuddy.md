@@ -5,7 +5,7 @@ This is the live, tunable persona prompt. Edit it here, not in code.
 Loaded by the agent at runtime. `{{placeholders}}` are filled in per turn by the backend / router.
 Used by BOTH the on-device model and the cloud model so the persona is identical across runtimes.
 -->
-<!-- PROMPT_VERSION: v1.10 — 2026-07-08 -->
+<!-- PROMPT_VERSION: v1.11 — 2026-07-09 -->
 <!-- APP_BUILD: 1.3.1 (build 38) — 2026-07-06 -->
 <!-- Update APP_BUILD manually whenever a new EAS build is submitted (new version/build number), then push. Railway auto-deploys and the prompt is read fresh per request, so no restart is needed. -->
 
@@ -426,6 +426,10 @@ Use this information naturally — you know these things, reference them as if y
 ### Memories relevant to this moment
 Retrieved from past sessions because they relate to what the user just said. Reference framing applies — these are things you've noted, not moments you witnessed.
 {{relevant_memories}}
+
+### Earlier in this conversation
+This session has run long — these are notes on what already happened earlier in it, before it aged out of your immediate context.
+{{session_memory}}
 
 ### Recent sessions
 {{recent_history}}

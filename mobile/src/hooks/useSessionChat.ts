@@ -61,6 +61,7 @@ export function useSessionChat() {
             recentHistory: state.recentHistory,
             triggerContext: state.triggerContext,
             userId: await resolveAuthUserId(),
+            sessionId: state.sessionId,
           },
           (accumulated) => {
             if (firstToken) {
@@ -128,6 +129,7 @@ export function useSessionChat() {
           // to load the profile, so BB opened every text session as a
           // stranger ("acts like it doesn't know me").
           userId: await resolveAuthUserId(),
+          sessionId: state.sessionId,
         },
         (accumulated) => {
           if (firstToken) {

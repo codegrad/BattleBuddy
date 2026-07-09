@@ -169,7 +169,7 @@ function buildSessionContext(profile) {
   return context;
 }
 
-function buildSystemPrompt(profile, triggerContext, recentHistory, timezone, lifeArchitecture, sessionContext, currentGoal, relevantMemories) {
+function buildSystemPrompt(profile, triggerContext, recentHistory, timezone, lifeArchitecture, sessionContext, currentGoal, relevantMemories, sessionMemory) {
   const localTime = formatLocalTime(timezone);
   const timeContext = `User's local time: ${localTime}.` +
     (triggerContext ? ` ${triggerContext}` : '');
@@ -181,7 +181,8 @@ function buildSystemPrompt(profile, triggerContext, recentHistory, timezone, lif
     .replace('{{recent_history}}', recentHistory || 'First message in this session.')
     .replace('{{life_architecture}}', lifeArchitecture || 'Not yet discovered — learn through conversation.')
     .replace('{{session_context}}', sessionContext || 'No prior session data.')
-    .replace('{{relevant_memories}}', relevantMemories || 'None retrieved for this turn.');
+    .replace('{{relevant_memories}}', relevantMemories || 'None retrieved for this turn.')
+    .replace('{{session_memory}}', sessionMemory || 'Nothing summarized yet — the session hasn\'t run long enough.');
 
   // Admin-console injections (read fresh per turn, same hot-reload contract
   // as the prompt file): directives above the persona, resources at the end.
@@ -209,6 +210,43 @@ async function fetchRelevantMemories(userId, queryText, timeoutMs = 800) {
   } catch {
     return null;
   }
+}
+
+// ─── Mid-session summarization ──────────────────────────────────────────────
+// Text turns are stateless server-side — the client resends the full
+// `messages` array every turn. Once that array crosses this many messages,
+// the model's own context window starts losing the earliest turns, so we
+// summarize the older portion once (in the background) and inject it as
+// {{session_memory}} on every subsequent turn. Keyed by the client's
+// sessionId, which resets cleanly on every new session (see sessionStore.ts
+// startSession), so a summary never bleeds into an unrelated conversation.
+const MID_SESSION_SUMMARY_THRESHOLD = 80;
+
+// sessionId -> { summary: string|null } — summary stays null while the
+// background Haiku call is in flight; injection is skipped until it resolves.
+const midSessionSummaries = new Map();
+
+function maybeSummarizeMidSession(sessionId, messages) {
+  if (!sessionId || !messages || messages.length < MID_SESSION_SUMMARY_THRESHOLD) return;
+  if (midSessionSummaries.has(sessionId)) return; // already running or done for this session
+
+  midSessionSummaries.set(sessionId, { summary: null });
+
+  const olderMessages = messages.slice(0, messages.length - 20);
+  const transcript = olderMessages.map(m => `${m.role}: ${m.content}`).join('\n');
+
+  client.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 700,
+    system: 'Summarize the key facts, decisions, emotional moments, and topics from this conversation so far. Be specific and concrete. Write it as notes to yourself about this person and what happened, not as a narrative. Under 500 words.',
+    messages: [{ role: 'user', content: transcript }],
+  }).then(response => {
+    const text = response.content.find(b => b.type === 'text')?.text || null;
+    midSessionSummaries.set(sessionId, { summary: text });
+  }).catch(err => {
+    console.error('Mid-session summary error:', err.message);
+    midSessionSummaries.delete(sessionId); // allow a retry on a later turn
+  });
 }
 
 // ─── bb_events tool ─────────────────────────────────────────────────────────
@@ -892,7 +930,7 @@ const server = createServer(async (req, res) => {
     for await (const chunk of req) body += chunk;
 
     try {
-      const { messages, profile, trigger_context, recent_history, userId, timezone } = JSON.parse(body);
+      const { messages, profile, trigger_context, recent_history, userId, timezone, sessionId } = JSON.parse(body);
 
       // Use the context agent's profile if available, fall back to client-provided.
       // Anonymous fallback must NOT be 'default' — that aliases to the founder's
@@ -915,6 +953,10 @@ const server = createServer(async (req, res) => {
       const relevantMemories = await fetchRelevantMemories(resolveUserId(effectiveUserId), lastUserMessage);
       const lastEventAwareness = await buildLastEventAwareness(effectiveUserId, timezone);
 
+      // Fire-and-forget — never let summarization delay this turn's first token.
+      maybeSummarizeMidSession(sessionId, messages);
+      const sessionMemory = sessionId ? midSessionSummaries.get(sessionId)?.summary : null;
+
       const systemPrompt = buildSystemPrompt(
         finalProfile,
         [trigger_context ? JSON.stringify(trigger_context) : null, lastEventAwareness].filter(Boolean).join(' ') || undefined,
@@ -924,6 +966,7 @@ const server = createServer(async (req, res) => {
         sessionContext,
         currentGoal,
         relevantMemories,
+        sessionMemory,
       );
 
       // Background fact extraction (non-blocking). Throttled to roughly every
@@ -1848,6 +1891,22 @@ Return ONLY the JSON object, no markdown, no explanation.`;
         }
       }
 
+      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: err.message }));
+    }
+  }
+
+  // TEMPORARY — one-time migration of context-store/*.json profile files
+  // into Supabase's user_profiles table. Remove this route once it's been
+  // run against production. See server/scripts/migrateProfilesToSupabase.js.
+  if (req.method === 'POST' && req.url === '/admin/migrate-profiles') {
+    if (!checkAdminSecret(req)) return send401(res, 401, 'Unauthorized');
+    try {
+      const { runMigration } = await import('./scripts/migrateProfilesToSupabase.js');
+      const result = await runMigration();
       res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
       return res.end(JSON.stringify(result));
     } catch (err) {
