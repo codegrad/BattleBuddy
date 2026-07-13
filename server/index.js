@@ -883,6 +883,122 @@ async function streamTextTurn(res, systemPrompt, conversationMessages, effective
   res.end();
 }
 
+// ── Journey stats (One Conversation head / Journey dashboard) ────────────────
+// Waking-hours gap semantics: gap metrics exclude the user's sleep window —
+// overnight abstinence isn't resistance and never pads a record. The window
+// comes from the profile's schedule model when known, else the documented
+// default (bedtime ~21:15, up ~06:00).
+function getSleepWindow(userId) {
+  try {
+    const prof = loadProfile(userId);
+    const w = prof?.schedule_model?.sleep_window;
+    if (w?.start && w?.end) return w;
+  } catch (e) {}
+  return { start: '21:15', end: '06:00' };
+}
+
+function minutesOfDay(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function localMinutes(d, timezone) {
+  const s = d.toLocaleTimeString('en-GB', { hour12: false, timeZone: timezone });
+  const [h, m] = s.split(':').map(Number);
+  return h * 60 + m;
+}
+
+// Waking milliseconds between two instants, excluding the nightly sleep
+// window, walking day boundaries so multi-day gaps stay correct.
+function wakingMsBetween(a, b, sleep, timezone) {
+  if (b <= a) return 0;
+  const sleepStart = minutesOfDay(sleep.start);
+  const sleepEnd = minutesOfDay(sleep.end);
+  const awakeMins = (from, to) => {
+    let mins = to - from;
+    mins -= Math.max(0, Math.min(to, 24 * 60) - Math.max(from, sleepStart)); // evening sleep
+    mins -= Math.max(0, Math.min(to, sleepEnd) - from);                      // morning sleep
+    return Math.max(0, mins);
+  };
+  let total = 0;
+  const cur = new Date(a);
+  while (cur < b) {
+    // end of this local day: advance from cur's local time to local midnight
+    const remainingToday = (24 * 60) - localMinutes(cur, timezone);
+    const dayEnd = new Date(cur.getTime() + remainingToday * 60000);
+    const sliceEnd = b < dayEnd ? b : dayEnd;
+    const from = localMinutes(cur, timezone);
+    let to = from + Math.round((sliceEnd - cur) / 60000);
+    if (to > 24 * 60) to = 24 * 60;
+    total += awakeMins(from, to) * 60000;
+    cur.setTime(dayEnd.getTime());
+  }
+  return total;
+}
+
+async function buildJourneyStats(userId, timezone) {
+  const events = await queryEvents(userId, { limit: 2000, timezone });
+  const sleep = getSleepWindow(userId);
+  const now = new Date();
+  const cigs = events.filter(e => e.event_type === 'cigarette')
+    .map(e => new Date(e.occurred_at)).sort((x, y) => x - y);
+  const resists = events.filter(e => e.event_type === 'urge_resisted');
+  const urgeLike = events.filter(e => ['urge', 'urge_resisted', 'urge_gave_in'].includes(e.event_type));
+
+  // journey: daily counts, last 30 days
+  const daily = {};
+  for (const d of cigs) {
+    const k = d.toLocaleDateString('en-CA', { timeZone: timezone });
+    daily[k] = (daily[k] || 0) + 1;
+  }
+  const days = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(now); d.setDate(d.getDate() - i);
+    const k = d.toLocaleDateString('en-CA', { timeZone: timezone });
+    days.push({ date: k, count: daily[k] || 0 });
+  }
+
+  // heatmap: urge-like events by local day-of-week × 4h block
+  const heat = Array.from({ length: 7 }, () => [0, 0, 0, 0, 0, 0]);
+  const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  for (const e of urgeLike) {
+    const d = new Date(e.occurred_at);
+    const dow = DOW.indexOf(d.toLocaleDateString('en-GB', { weekday: 'short', timeZone: timezone }));
+    const hour = Number(d.toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', timeZone: timezone }));
+    if (dow >= 0) heat[dow][Math.floor(hour / 4)]++;
+  }
+
+  // records: longest waking gap between cigarettes; current waking gap
+  let longestGapMs = 0, longestGapAt = null;
+  for (let i = 1; i < cigs.length; i++) {
+    const g = wakingMsBetween(cigs[i - 1], cigs[i], sleep, timezone);
+    if (g > longestGapMs) { longestGapMs = g; longestGapAt = cigs[i].toISOString(); }
+  }
+  const currentGapMs = cigs.length ? wakingMsBetween(cigs[cigs.length - 1], now, sleep, timezone) : 0;
+
+  // most resists in any rolling 7-day window
+  const resistTimes = resists.map(e => new Date(e.occurred_at).getTime()).sort((x, y) => x - y);
+  let bestWeekResists = 0;
+  for (let i = 0; i < resistTimes.length; i++) {
+    let j = i;
+    while (j < resistTimes.length && resistTimes[j] - resistTimes[i] <= 7 * 86400e3) j++;
+    bestWeekResists = Math.max(bestWeekResists, j - i);
+  }
+
+  return {
+    sleep_window: sleep,
+    journey: { days, baseline: Math.max(...days.map(d => d.count), 1) },
+    heatmap: { rows: DOW, cols: ['12a', '4a', '8a', '12p', '4p', '8p'], data: heat },
+    records: {
+      longest_waking_gap_ms: longestGapMs,
+      longest_waking_gap_at: longestGapAt,
+      current_waking_gap_ms: currentGapMs,
+      best_week_resists: bestWeekResists,
+      note: 'gap metrics exclude the sleep window — sleep is not a struggle',
+    },
+  };
+}
+
 const server = createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, CORS);
@@ -1819,6 +1935,30 @@ Return ONLY the JSON object, no markdown, no explanation.`;
     }
   }
 
+  // ── Journey dashboard stats — /stats/all|journey|heatmap|records ────────────
+  if (req.method === 'GET' && req.url.startsWith('/stats/')) {
+    const url = new URL(req.url, 'http://localhost');
+    const userId = url.searchParams.get('userId');
+    if (!userId) {
+      res.writeHead(400, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'userId required' }));
+    }
+    try {
+      const timezone = url.searchParams.get('timezone') || DEFAULT_TZ;
+      const stats = await buildJourneyStats(resolveUserId(userId), timezone);
+      const view = req.url.split('?')[0].split('/stats/')[1];
+      const body = view === 'journey' ? { journey: stats.journey }
+        : view === 'heatmap' ? { heatmap: stats.heatmap }
+        : view === 'records' ? { records: stats.records }
+        : stats;
+      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(body));
+    } catch (err) {
+      res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: err.message }));
+    }
+  }
+
   if (req.method === 'GET' && req.url.startsWith('/events')) {
     const url = new URL(req.url, 'http://localhost');
     const userId = url.searchParams.get('userId');
@@ -2048,6 +2188,20 @@ Return ONLY the JSON object, no markdown, no explanation.`;
       console.log(`[Webhook] Error: ${e.message}`);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ ok: true }));
+    }
+  }
+
+  // ── One Conversation web head — the backend serves its own frontend ────────
+  // Single self-contained file at web/index.html; read fresh per request so a
+  // deploy updates it with no restart (same pattern as the prompt file).
+  if (req.method === 'GET' && (req.url === '/app' || req.url === '/app/')) {
+    try {
+      const html = readFileSync(resolve(__dirname, '..', 'web', 'index.html'), 'utf-8');
+      res.writeHead(200, { ...CORS, 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(html);
+    } catch (err) {
+      res.writeHead(404, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'web head not present in this deploy' }));
     }
   }
 
