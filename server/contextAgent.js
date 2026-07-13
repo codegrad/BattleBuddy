@@ -361,6 +361,16 @@ async function warmProfileStoreFromSupabase() {
 
 await warmProfileStoreFromSupabase();
 
+// Non-profile bookkeeping files that live in the same STORE_DIR as profile
+// JSON — audit-state.json (runTranscriptAudit's last-run marker) and
+// design-loop-state.json (agentDesignLoop's last-run marker) in index.js.
+// Any call to loadProfile() with one of these ids as the userId (e.g. someone
+// probing GET /context/profile/audit-state) would otherwise read that
+// bookkeeping file, run it through migrateProfile (which happily bolts a
+// fake profile shape onto arbitrary JSON), cache it, and — since saveProfile
+// now upserts to Supabase — permanently plant a bogus "user" row.
+const RESERVED_PROFILE_IDS = new Set(['audit-state', 'design-loop-state']);
+
 function getStorePath(userId) {
   return resolve(STORE_DIR, `${userId}.json`);
 }
@@ -668,6 +678,9 @@ function pruneProfile(profile) {
 export function loadProfile(rawUserId) {
   const userId = resolveUserId(rawUserId);
   if (profiles[userId]) return profiles[userId];
+  // Never cache or persist under a reserved id — return a throwaway default
+  // so a probe/typo can't plant a permanent bogus row.
+  if (RESERVED_PROFILE_IDS.has(userId)) return buildDefaultProfile();
 
   let loaded = null;
   const path = getStorePath(userId);
@@ -700,7 +713,12 @@ export function loadProfile(rawUserId) {
     return profiles[userId];
   }
 
-  profiles[userId] = {
+  profiles[userId] = buildDefaultProfile();
+  return profiles[userId];
+}
+
+function buildDefaultProfile() {
+  return {
     name: null,
     age: null,
     location: null,
@@ -750,7 +768,6 @@ export function loadProfile(rawUserId) {
       life_change_watch: [],
     },
   };
-  return profiles[userId];
 }
 
 function saveProfile(userId) {
@@ -782,6 +799,7 @@ export function persistProfile(rawUserId) {
  */
 export function replaceProfile(rawUserId, newProfile) {
   const userId = resolveUserId(rawUserId);
+  if (RESERVED_PROFILE_IDS.has(userId)) return migrateProfile(newProfile);
   profiles[userId] = migrateProfile(newProfile);
   saveProfile(userId);
   return profiles[userId];

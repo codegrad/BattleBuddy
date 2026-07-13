@@ -1899,22 +1899,6 @@ Return ONLY the JSON object, no markdown, no explanation.`;
     }
   }
 
-  // TEMPORARY — one-time migration of context-store/*.json profile files
-  // into Supabase's user_profiles table. Remove this route once it's been
-  // run against production. See server/scripts/migrateProfilesToSupabase.js.
-  if (req.method === 'POST' && req.url === '/admin/migrate-profiles') {
-    if (!checkAdminSecret(req)) return send401(res, 401, 'Unauthorized');
-    try {
-      const { runMigration } = await import('./scripts/migrateProfilesToSupabase.js');
-      const result = await runMigration();
-      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify(result));
-    } catch (err) {
-      res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: err.message }));
-    }
-  }
-
   // Memory consolidation on demand. {"userId": "...", "all": true} backfills
   // the user's full transcript history in batches of 10 sessions.
   if (req.method === 'POST' && req.url === '/admin/consolidate') {
