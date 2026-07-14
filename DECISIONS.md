@@ -4,6 +4,20 @@ A running log of significant product/architecture decisions and deviations from 
 
 ---
 
+## 2026-07-14 — One Conversation mobile port: reconstructed brief, TestFlight profile, voice entry points
+
+**Decision.** The native One Conversation port (new `app/(app)/session.tsx` surface replacing the separate-screens UI) was built against `server/web/index.html` (the /app web head) as the behavioral and visual spec. The planning brief it was supposed to follow — `battlebuddyredesign/mobile/MOBILE-PORT.md`, including a drafted `BreathingCard.tsx` — does not exist anywhere on the dev machine (repo, ~/Downloads zip, Trash); the web head is the same design from the same deliverable, so it served as the spec of record. BreathingCard was written fresh from the web head's `breathingCard()`.
+
+**Deviations worth knowing.**
+- TestFlight builds use the `production` EAS profile, not `preview`: `preview` is `distribution: internal` (ad-hoc), which App Store Connect rejects, and every prior TestFlight build in the project used `production`.
+- Both hub swipe directions (up AND down) now open `/session`. There is no separate voice screen to point "down" at anymore, and a route that pre-armed the mic would violate the audio-never-auto-enables rule — voice is the dock's speaker tap, opt-in per session.
+- Push notifications that used to deep-link to `session-voice` now open `/session` with audio off, same rule.
+- `goals.tsx` needed no "streak ladder" removal — it was already the records/milestones screen (records only grow; no streaks).
+
+**Affects.** `session-chat.tsx`, `session-voice.tsx`, and `TriggerCapture.tsx` are deleted; `ChatBottomSheet` (kept for the legacy `HomeScreen`) lost its dead TriggerCapture branch. `statsService` now validates `/stats/*` response shapes — the previously assumed shapes crash the journey charts for any real signed-in userId.
+
+---
+
 ## 2026-07-09 — Profile store moved to Supabase, kept synchronous via boot-time cache warm-up
 
 **Decision.** `contextAgent.js`'s `loadProfile`/`saveProfile` now read/write a Supabase `user_profiles` table (jsonb column) instead of `context-store/{userId}.json` on the Railway volume. The volume file is the fallback for migration only — session transcripts (a separate concern) are untouched and still live there. `USER_ALIASES` (previously a hardcoded const, contrary to how the migration request described it — it was never actually persisted anywhere) is now mirrored into a `user_aliases` table too, seeded from the hardcoded map on first boot; the hardcoded map remains the offline fallback.

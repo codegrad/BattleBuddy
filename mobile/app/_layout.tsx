@@ -24,14 +24,6 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
-            name="session-voice"
-            options={{
-              presentation: 'fullScreenModal',
-              // Slides in via EdgeEntrance instead — see session-voice.tsx.
-              animation: 'none',
-            }}
-          />
-          <Stack.Screen
             name="mic-test"
             options={{
               presentation: 'fullScreenModal',

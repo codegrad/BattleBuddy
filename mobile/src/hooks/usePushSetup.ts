@@ -40,7 +40,9 @@ export function usePushSetup(userId: string | null, enabled = true) {
   useEffect(() => {
     const handleTap = (route?: 'chat' | 'voice') => {
       if (route === 'voice') {
-        router.push('/session-voice');
+        // Voice notifications open the One Conversation surface; audio still
+        // only turns on when the user taps the speaker (never automatically).
+        router.push('/session');
       } else {
         setPendingRoute('chat');
       }

@@ -88,13 +88,13 @@ export default function HomeScreen({ onOpenDrawer }: HomeScreenProps) {
   }, [endSession, onSessionEndEngagement]);
 
   const openVoice = useCallback(() => {
-    router.push('/session-voice');
+    router.push('/session');
   }, []);
 
   const switchToVoice = useCallback(() => {
     setChatOpen(false);
     switchMode('voice');
-    router.push('/session-voice');
+    router.push('/session');
   }, [switchMode]);
 
   const swipeGesture = Gesture.Pan()

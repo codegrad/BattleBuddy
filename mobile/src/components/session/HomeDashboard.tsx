@@ -7,6 +7,7 @@ import IndependenceTrend from '../journey/IndependenceTrend';
 import InsightCards from '../journey/InsightCards';
 import WhatWorksList from '../journey/WhatWorksList';
 import { useAuthStore } from '../../stores/authStore';
+import { useSettingsStore, type Hand } from '../../stores/settingsStore';
 import {
   fetchJourney,
   fetchInsights,
@@ -219,6 +220,16 @@ export default function HomeDashboard({ onTalk, onQuickLog }: HomeDashboardProps
         />
       </JCard>
 
+      <JCard
+        title="Settings"
+        sub="Which hand do you use? Buddy and the primary controls move to your thumb side."
+      >
+        <HandToggle />
+        <Text style={styles.settingsNote}>
+          Applies everywhere: Buddy's presence, mic and send, and the view tabs.
+        </Text>
+      </JCard>
+
       {journey && (
         <JCard
           title="Independence trend"
@@ -290,6 +301,36 @@ function RecordRow({ name, value }: { name: string; value: string }) {
 
 function CtaRow({ children }: { children: ReactNode }) {
   return <View style={styles.ctaRow}>{children}</View>;
+}
+
+function HandToggle() {
+  const hand = useSettingsStore((s) => s.hand);
+  const setHand = useSettingsStore((s) => s.setHand);
+  const options: { key: Hand; label: string }[] = [
+    { key: 'left', label: 'Left hand' },
+    { key: 'right', label: 'Right hand' },
+  ];
+  return (
+    <View style={styles.handRow} accessibilityRole="radiogroup">
+      {options.map(({ key, label }) => {
+        const on = hand === key;
+        return (
+          <TouchableOpacity
+            key={key}
+            style={[styles.handBtn, on && styles.handBtnOn]}
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => {});
+              setHand(key);
+            }}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: on }}
+          >
+            <Text style={[styles.handLabel, on && styles.handLabelOn]}>{label}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
 }
 
 function Cta({ label, primary, onPress }: { label: string; primary?: boolean; onPress: () => void }) {
@@ -422,5 +463,34 @@ const styles = StyleSheet.create({
   },
   ctaLabelPrimary: {
     color: Colors.coral,
+  },
+  handRow: {
+    flexDirection: 'row',
+    backgroundColor: Colors.surface,
+    borderRadius: 999,
+    padding: 3,
+    alignSelf: 'flex-start',
+    gap: 2,
+  },
+  handBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  handBtnOn: {
+    backgroundColor: Colors.surfaceLight,
+  },
+  handLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  handLabelOn: {
+    color: Colors.textPrimary,
+  },
+  settingsNote: {
+    fontSize: 11,
+    color: Colors.textTertiary,
+    lineHeight: 15,
   },
 });

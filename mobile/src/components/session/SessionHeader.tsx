@@ -9,6 +9,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import type { MascotState } from '../mascot';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { Colors } from '../../theme';
 
 export type SessionPhase = 'observation' | 'resistance';
@@ -68,32 +69,53 @@ export default function SessionHeader({ mascotState, phase }: SessionHeaderProps
   const orbColor = STATE_COLOR[mascotState];
   const resistance = phase === 'resistance';
 
+  const hand = useSettingsStore((s) => s.hand);
   const time = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const day = now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 
-  // Right-hand layout per the web head's default: clock on the far left,
-  // Buddy's presence on the thumb side. Phase 5's handedness setting flips it.
-  return (
+  const clock = (
+    <View style={[styles.clock, hand === 'left' && styles.clockLeftHand]}>
+      <Text style={styles.time}>{time}</Text>
+      <Text style={styles.day}>{day}</Text>
+    </View>
+  );
+  const chip = (
+    <View style={[styles.chip, resistance ? styles.chipResistance : styles.chipObservation]}>
+      <View style={[styles.chipDot, { backgroundColor: resistance ? Colors.coral : Colors.stateIdle }]} />
+      <Text style={[styles.chipLabel, { color: resistance ? Colors.coral : Colors.stateIdle }]}>
+        {resistance ? 'RESISTANCE' : 'OBSERVATION'}
+      </Text>
+    </View>
+  );
+  const buddy = (
+    <View style={[styles.meta, hand === 'left' && styles.metaLeftHand]}>
+      <Text style={styles.name}>Buddy</Text>
+      <Text style={styles.state}>{STATE_LABEL[mascotState]}</Text>
+    </View>
+  );
+  const orb = (
+    <View style={styles.orbWrap}>
+      <Animated.View style={[styles.orbRing, ringStyle, { borderColor: orbColor }]} />
+      <View style={[styles.orb, { backgroundColor: orbColor }]} />
+    </View>
+  );
+
+  // Buddy's presence lives on the thumb side; clock and chip on the other.
+  return hand === 'right' ? (
     <View style={styles.row}>
-      <View style={styles.clock}>
-        <Text style={styles.time}>{time}</Text>
-        <Text style={styles.day}>{day}</Text>
-      </View>
-      <View style={[styles.chip, resistance ? styles.chipResistance : styles.chipObservation]}>
-        <View style={[styles.chipDot, { backgroundColor: resistance ? Colors.coral : Colors.stateIdle }]} />
-        <Text style={[styles.chipLabel, { color: resistance ? Colors.coral : Colors.stateIdle }]}>
-          {resistance ? 'RESISTANCE' : 'OBSERVATION'}
-        </Text>
-      </View>
+      {clock}
+      {chip}
       <View style={styles.spacer} />
-      <View style={styles.meta}>
-        <Text style={styles.name}>Buddy</Text>
-        <Text style={styles.state}>{STATE_LABEL[mascotState]}</Text>
-      </View>
-      <View style={styles.orbWrap}>
-        <Animated.View style={[styles.orbRing, ringStyle, { borderColor: orbColor }]} />
-        <View style={[styles.orb, { backgroundColor: orbColor }]} />
-      </View>
+      {buddy}
+      {orb}
+    </View>
+  ) : (
+    <View style={styles.row}>
+      {orb}
+      {buddy}
+      <View style={styles.spacer} />
+      {chip}
+      {clock}
     </View>
   );
 }
@@ -130,6 +152,12 @@ const styles = StyleSheet.create({
   meta: {
     alignItems: 'flex-end',
     gap: 1,
+  },
+  metaLeftHand: {
+    alignItems: 'flex-start',
+  },
+  clockLeftHand: {
+    alignItems: 'flex-end',
   },
   name: {
     fontSize: 16,

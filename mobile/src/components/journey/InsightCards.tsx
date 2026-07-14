@@ -27,7 +27,7 @@ export default function InsightCards({ insights, onTalk }: InsightCardsProps) {
       intensity: 0,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     });
-    router.push('/session-chat');
+    router.push('/session');
   };
 
   return (

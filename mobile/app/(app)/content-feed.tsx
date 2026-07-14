@@ -53,11 +53,13 @@ export default function ContentFeedScreen() {
   }, []);
 
   const handleOpenChat = useCallback(() => {
-    router.push('/session-chat');
+    router.push('/session');
   }, []);
 
   const goHome = useCallback(() => router.replace('/(app)/'), []);
-  const goVoice = useCallback(() => router.push('/session-voice'), []);
+  // Voice lives inside the One Conversation surface now (speaker tap on the
+  // dock — audio never auto-enables), so the mic shortcut goes there too.
+  const goVoice = useCallback(() => router.push('/session'), []);
 
   return (
     <EdgeEntrance edge="left">

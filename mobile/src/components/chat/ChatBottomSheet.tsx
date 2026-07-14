@@ -15,7 +15,6 @@ import Markdown from 'react-native-markdown-display';
 import { useSessionStore, type SessionMessage } from '../../stores/sessionStore';
 import { useSessionChat } from '../../hooks/useSessionChat';
 import { fetchUserProfile } from '../../services/profileBuilder';
-import TriggerCapture from '../session/TriggerCapture';
 import { Colors, Spacing } from '../../theme';
 
 interface ChatBottomSheetProps {
@@ -26,7 +25,6 @@ interface ChatBottomSheetProps {
 
 export default function ChatBottomSheet({ open, onClose, onSwitchToVoice }: ChatBottomSheetProps) {
   const [input, setInput] = useState('');
-  const [showTrigger, setShowTrigger] = useState(false);
   const [hasGreeted, setHasGreeted] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const inputRef = useRef<TextInput>(null);
@@ -62,26 +60,6 @@ export default function ChatBottomSheet({ open, onClose, onSwitchToVoice }: Chat
 
     greet();
   }, [open, hasGreeted, isActive, startSession, setProfileSummary, setRecentHistory, greet]);
-
-  const handleTriggerComplete = useCallback(
-    (trigger: string, intensity: number) => {
-      setTriggerContext({
-        trigger,
-        intensity,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      });
-      setShowTrigger(false);
-      setHasGreeted(true);
-      greet();
-    },
-    [setTriggerContext, greet],
-  );
-
-  const handleTriggerSkip = useCallback(() => {
-    setShowTrigger(false);
-    setHasGreeted(true);
-    greet();
-  }, [greet]);
 
   const handleSend = useCallback(() => {
     const text = input.trim();
@@ -170,10 +148,7 @@ export default function ChatBottomSheet({ open, onClose, onSwitchToVoice }: Chat
           </TouchableOpacity>
         </View>
 
-        {showTrigger ? (
-          <TriggerCapture onComplete={handleTriggerComplete} onSkip={handleTriggerSkip} />
-        ) : (
-          <>
+        <>
             {/* Messages — inverted FlatList so newest is always at bottom */}
             <FlatList
               ref={flatListRef}
@@ -223,8 +198,7 @@ export default function ChatBottomSheet({ open, onClose, onSwitchToVoice }: Chat
                 <Text style={styles.sendText}>↑</Text>
               </TouchableOpacity>
             </View>
-          </>
-        )}
+        </>
       </KeyboardAvoidingView>
     </View>
   );

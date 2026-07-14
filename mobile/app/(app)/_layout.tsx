@@ -12,6 +12,7 @@ import { AppState } from 'react-native';
 import { startBiometricStream } from '../../src/services/biometricStream';
 import { startRiskWindowMonitor } from '../../src/services/engagementEngine';
 import { useSessionStore, hydrateSessionStore } from '../../src/stores/sessionStore';
+import { hydrateSettingsStore } from '../../src/stores/settingsStore';
 import { useAuthStore } from '../../src/stores/authStore';
 import { ApiConfig } from '../../src/config';
 
@@ -39,7 +40,7 @@ export default function AppLayout() {
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     if (authLoading) return;
-    hydrateSessionStore().then(() => setHydrated(true));
+    Promise.all([hydrateSessionStore(), hydrateSettingsStore()]).then(() => setHydrated(true));
   }, [authLoading, authUser?.id]);
 
   useEffect(() => {
@@ -191,9 +192,8 @@ export default function AppLayout() {
             disabled here so the two don't stack. */}
         <Stack.Screen name="content-feed" options={{ animation: 'none' }} />
         <Stack.Screen name="profile" options={{ animation: 'none' }} />
-        <Stack.Screen name="session-chat" options={{ animation: 'none' }} />
-        {/* The One Conversation surface — replaces session-chat/-voice and
-            the standalone dashboards as the phases land. */}
+        {/* The One Conversation surface — chat, voice, dashboard, and content
+            on one screen. Replaced session-chat and session-voice. */}
         <Stack.Screen name="session" options={{ animation: 'none' }} />
       </Stack>
     </AppDrawer>

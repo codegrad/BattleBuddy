@@ -3,6 +3,7 @@ import { View, Text, FlatList, StyleSheet } from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import StreamCard from './StreamCard';
 import { useSessionStore, type SessionMessage } from '../../stores/sessionStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { Colors, Spacing } from '../../theme';
 
 // The One Conversation stream: message bubbles, quick-log receipts, phase
@@ -18,22 +19,33 @@ function isHiddenSeed(m: SessionMessage): boolean {
 
 /** Dashboard/content CTAs prefix the turn with bracketed context for the
     model ("[Looking at the arc card…] Let's talk about this."). The context
-    rides to the API; the stream shows only the human part. Phase 5 renders
-    the prefix as a reply-quote instead of dropping it. */
-function displayContent(m: SessionMessage): string {
+    rides to the API; the stream renders it as a reply-quote — the user sees
+    WHAT they were talking about, not the wire format. */
+function displayParts(m: SessionMessage): { quote?: { title: string; text: string }; text: string } {
   if (m.role === 'user' && m.content.startsWith('[')) {
     const close = m.content.indexOf(']');
     if (close > 0 && close < m.content.length - 1) {
-      return m.content.slice(close + 1).trim();
+      const inner = m.content.slice(1, close);
+      const text = m.content.slice(close + 1).trim();
+      const titleMatch = inner.match(/"([^"]+)"/);
+      const colon = inner.indexOf(': ');
+      return {
+        quote: {
+          title: titleMatch ? titleMatch[1] : 'From your dashboard',
+          text: colon >= 0 ? inner.slice(colon + 2) : inner,
+        },
+        text,
+      };
     }
   }
-  return m.content;
+  return { text: m.content };
 }
 
 export default function ConversationStream({ onBreathingDone }: ConversationStreamProps) {
   const messages = useSessionStore((s) => s.messages);
   const previousMessages = useSessionStore((s) => s.previousMessages);
   const isStreaming = useSessionStore((s) => s.isStreaming);
+  const textScale = useSettingsStore((s) => s.textScale);
   const listRef = useRef<FlatList>(null);
 
   const displayMessages = useMemo(() => {
@@ -95,7 +107,11 @@ export default function ConversationStream({ onBreathingDone }: ConversationStre
         return <StreamCard card={item.card} onBreathingDone={onBreathingDone} />;
       }
       const isAssistant = item.role === 'assistant';
-      const content = displayContent(item);
+      const { quote, text } = displayParts(item);
+      const scaledMd = {
+        ...mdStyles,
+        body: { ...mdStyles.body, fontSize: 16 * textScale, lineHeight: 24 * textScale },
+      };
       return (
         <View style={[styles.bubble, isAssistant ? styles.assistantBubble : styles.userBubble]}>
           {isAssistant && !item.content && isStreaming && (
@@ -104,15 +120,23 @@ export default function ConversationStream({ onBreathingDone }: ConversationStre
           {item.mode === 'voice' && isAssistant && (
             <Text style={styles.modeTag}>via voice</Text>
           )}
+          {quote && (
+            <View style={styles.replyQuote}>
+              <Text style={styles.rqTitle}>{quote.title}</Text>
+              <Text style={styles.rqText} numberOfLines={2}>{quote.text}</Text>
+            </View>
+          )}
           {isAssistant && item.content ? (
-            <Markdown style={mdStyles}>{item.content}</Markdown>
+            <Markdown style={scaledMd}>{item.content}</Markdown>
           ) : (
-            <Text style={styles.messageText}>{content}</Text>
+            <Text style={[styles.messageText, { fontSize: 16 * textScale, lineHeight: 22 * textScale }]}>
+              {text}
+            </Text>
           )}
         </View>
       );
     },
-    [isStreaming, onBreathingDone],
+    [isStreaming, onBreathingDone, textScale],
   );
 
   return (
@@ -156,6 +180,27 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: Colors.textPrimary,
     lineHeight: 22,
+  },
+  replyQuote: {
+    borderLeftWidth: 3,
+    borderLeftColor: 'rgba(255,255,255,0.45)',
+    backgroundColor: 'rgba(0,0,0,0.18)',
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    marginBottom: 6,
+    gap: 2,
+  },
+  rqTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    opacity: 0.9,
+  },
+  rqText: {
+    fontSize: 11,
+    color: Colors.textPrimary,
+    opacity: 0.7,
   },
   modeTag: {
     fontSize: 10,

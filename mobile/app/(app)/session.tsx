@@ -25,6 +25,7 @@ import ContentPane from '../../src/components/session/ContentPane';
 import VoiceSession from '../../src/components/session/VoiceSession';
 import VoiceBand from '../../src/components/session/VoiceBand';
 import { useSessionStore } from '../../src/stores/sessionStore';
+import { useSettingsStore } from '../../src/stores/settingsStore';
 import { useAuthStore } from '../../src/stores/authStore';
 import { useSessionChat } from '../../src/hooks/useSessionChat';
 import { useEngagementEngine } from '../../src/services/engagementEngine';
@@ -209,6 +210,7 @@ export default function SessionScreen() {
 
   const openChat = useCallback(() => setView('chat'), []);
 
+  const hand = useSettingsStore((s) => s.hand);
   const switchMode = useSessionStore((s) => s.switchMode);
 
   // The speaker tap: voice joins the same stream in place. Turning it off
@@ -238,6 +240,47 @@ export default function SessionScreen() {
     Haptics.selectionAsync().catch(() => {});
     setMuted((m) => !m);
   }, []);
+
+  const dockButtons = (
+    <>
+      <TouchableOpacity
+        style={[styles.dockBtn, styles.sendBtn, (!input.trim() || isStreaming) && styles.dockBtnDisabled]}
+        onPress={() => {
+          handleSend();
+          inputRef.current?.focus();
+        }}
+        disabled={!input.trim() || isStreaming}
+        activeOpacity={0.7}
+        accessibilityLabel="Send"
+      >
+        <Text style={styles.sendGlyph}>↑</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.dockBtn, audioOn && styles.audioOnBtn]}
+        onPress={toggleAudio}
+        activeOpacity={0.7}
+        accessibilityLabel={audioOn ? 'Turn audio off' : 'Turn audio on'}
+        accessibilityState={{ selected: audioOn }}
+      >
+        <Ionicons
+          name={audioOn ? 'volume-high' : 'volume-mute-outline'}
+          size={19}
+          color={Colors.textPrimary}
+        />
+      </TouchableOpacity>
+      {audioOn && (
+        <TouchableOpacity
+          style={[styles.dockBtn, muted && styles.mutedBtn]}
+          onPress={toggleMute}
+          activeOpacity={0.7}
+          accessibilityLabel={muted ? 'Unmute microphone' : 'Mute microphone'}
+          accessibilityState={{ selected: muted }}
+        >
+          <Ionicons name={muted ? 'mic-off' : 'mic-outline'} size={19} color={Colors.textPrimary} />
+        </TouchableOpacity>
+      )}
+    </>
+  );
 
   return (
     <View style={styles.container}>
@@ -276,8 +319,9 @@ export default function SessionScreen() {
           )}
 
           {/* The unified dock. Audio never auto-enables; only the speaker
-              tap turns it on. */}
+              tap turns it on. Buttons ride the thumb side. */}
           <View style={[styles.dock, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+            {hand === 'left' && dockButtons}
             <TextInput
               ref={inputRef}
               style={styles.input}
@@ -295,42 +339,7 @@ export default function SessionScreen() {
               multiline
               textAlignVertical="top"
             />
-            <TouchableOpacity
-              style={[styles.dockBtn, styles.sendBtn, (!input.trim() || isStreaming) && styles.dockBtnDisabled]}
-              onPress={() => {
-                handleSend();
-                inputRef.current?.focus();
-              }}
-              disabled={!input.trim() || isStreaming}
-              activeOpacity={0.7}
-              accessibilityLabel="Send"
-            >
-              <Text style={styles.sendGlyph}>↑</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.dockBtn, audioOn && styles.audioOnBtn]}
-              onPress={toggleAudio}
-              activeOpacity={0.7}
-              accessibilityLabel={audioOn ? 'Turn audio off' : 'Turn audio on'}
-              accessibilityState={{ selected: audioOn }}
-            >
-              <Ionicons
-                name={audioOn ? 'volume-high' : 'volume-mute-outline'}
-                size={19}
-                color={Colors.textPrimary}
-              />
-            </TouchableOpacity>
-            {audioOn && (
-              <TouchableOpacity
-                style={[styles.dockBtn, muted && styles.mutedBtn]}
-                onPress={toggleMute}
-                activeOpacity={0.7}
-                accessibilityLabel={muted ? 'Unmute microphone' : 'Mute microphone'}
-                accessibilityState={{ selected: muted }}
-              >
-                <Ionicons name={muted ? 'mic-off' : 'mic-outline'} size={19} color={Colors.textPrimary} />
-              </TouchableOpacity>
-            )}
+            {hand === 'right' && dockButtons}
           </View>
         </KeyboardAvoidingView>
       </View>
