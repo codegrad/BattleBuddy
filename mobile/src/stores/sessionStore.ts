@@ -18,12 +18,34 @@ const PERSIST_KEYS = {
 
 export type SessionMode = 'text' | 'voice' | 'idle';
 
+// ── One Conversation stream items ───────────────────────────────────────────
+// The stream is more than bubbles: quick logs land as receipts, the agent
+// presents interactive cards (Rule of Three, quotes, videos, journey views),
+// and phase changes draw a banner. They live in the same ordered array as
+// messages (kind defaults to 'message'); everything non-message has empty
+// content, so the API payload, persistence, and session reports — which all
+// filter on content — ignore them for free.
+
+export type ReceiptType = 'resisted' | 'cigarette' | 'decision' | 'urge';
+
+export type StreamCardData =
+  | { type: 'breathing' }
+  | { type: 'quote'; quote: string; cite: string }
+  | { type: 'video'; title: string; url: string; thumbnailUrl?: string; durationSeconds?: number }
+  | { type: 'heatmap' }
+  | { type: 'records' };
+
 export interface SessionMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   mode: SessionMode;
   timestamp: number;
+  kind?: 'message' | 'receipt' | 'card' | 'banner';
+  receipt?: { type: ReceiptType; label: string };
+  card?: StreamCardData;
+  /** banner: which phase the conversation just entered. */
+  bannerPhase?: 'observation' | 'resistance';
 }
 
 export type SessionOutcome = 'resisted' | 'submitted' | 'unsure' | 'gave_in';
@@ -66,6 +88,9 @@ interface SessionState {
   addUserMessage: (content: string) => void;
   addAssistantMessage: () => string;
   updateAssistantMessage: (id: string, content: string) => void;
+  addReceipt: (type: ReceiptType, label: string) => void;
+  addCard: (card: StreamCardData) => string;
+  addPhaseBanner: (phase: 'observation' | 'resistance') => void;
   setStreaming: (streaming: boolean) => void;
 
   setMascotState: (state: MascotState) => void;
@@ -257,6 +282,50 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }));
 
     updateMessageContent(id, content).catch(() => {});
+  },
+
+  addReceipt: (type, label) => {
+    const { mode } = get();
+    const item: SessionMessage = {
+      id: nextId(),
+      role: 'assistant',
+      content: '',
+      mode,
+      timestamp: Date.now(),
+      kind: 'receipt',
+      receipt: { type, label },
+    };
+    set((state) => ({ messages: [...state.messages, item] }));
+  },
+
+  addCard: (card) => {
+    const { mode } = get();
+    const id = nextId();
+    const item: SessionMessage = {
+      id,
+      role: 'assistant',
+      content: '',
+      mode,
+      timestamp: Date.now(),
+      kind: 'card',
+      card,
+    };
+    set((state) => ({ messages: [...state.messages, item] }));
+    return id;
+  },
+
+  addPhaseBanner: (phase) => {
+    const { mode } = get();
+    const item: SessionMessage = {
+      id: nextId(),
+      role: 'assistant',
+      content: '',
+      mode,
+      timestamp: Date.now(),
+      kind: 'banner',
+      bannerPhase: phase,
+    };
+    set((state) => ({ messages: [...state.messages, item] }));
   },
 
   setStreaming: (streaming) => set({ isStreaming: streaming }),

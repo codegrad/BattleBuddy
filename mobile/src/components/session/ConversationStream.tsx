@@ -1,12 +1,16 @@
 import { useCallback, useMemo, useRef } from 'react';
 import { View, Text, FlatList, StyleSheet } from 'react-native';
 import Markdown from 'react-native-markdown-display';
+import StreamCard from './StreamCard';
 import { useSessionStore, type SessionMessage } from '../../stores/sessionStore';
 import { Colors, Spacing } from '../../theme';
 
-// The One Conversation stream. Phase 1 renders message bubbles (and the
-// previous-session separator) exactly as ChatBottomSheet did; Phase 3 extends
-// the item union with receipts, phase banners, and inline cards.
+// The One Conversation stream: message bubbles, quick-log receipts, phase
+// banners, and agent-presented inline cards, all in one ordered list.
+
+interface ConversationStreamProps {
+  onBreathingDone: (from: number, to: number) => void;
+}
 
 function isHiddenSeed(m: SessionMessage): boolean {
   return m.role === 'user' && m.content.startsWith('[') && m.content.endsWith(']');
@@ -26,7 +30,7 @@ function displayContent(m: SessionMessage): string {
   return m.content;
 }
 
-export default function ConversationStream() {
+export default function ConversationStream({ onBreathingDone }: ConversationStreamProps) {
   const messages = useSessionStore((s) => s.messages);
   const previousMessages = useSessionStore((s) => s.previousMessages);
   const isStreaming = useSessionStore((s) => s.isStreaming);
@@ -63,6 +67,33 @@ export default function ConversationStream() {
           </View>
         );
       }
+      if (item.kind === 'receipt' && item.receipt) {
+        const dotColor =
+          item.receipt.type === 'resisted' ? Colors.success
+          : item.receipt.type === 'decision' ? Colors.stateIdle
+          : item.receipt.type === 'urge' ? Colors.coral
+          : Colors.textTertiary;
+        const time = new Date(item.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        return (
+          <View style={styles.receipt}>
+            <View style={[styles.receiptDot, { backgroundColor: dotColor }]} />
+            <Text style={styles.receiptText}>Logged — {time} · {item.receipt.label}</Text>
+          </View>
+        );
+      }
+      if (item.kind === 'banner' && item.bannerPhase) {
+        const resistance = item.bannerPhase === 'resistance';
+        return (
+          <View style={[styles.banner, resistance ? styles.bannerResistance : styles.bannerObservation]}>
+            <Text style={[styles.bannerText, { color: resistance ? Colors.coral : Colors.stateIdle }]}>
+              {resistance ? "Resistance — I'm right here" : 'Back to observation — no grades, just the map'}
+            </Text>
+          </View>
+        );
+      }
+      if (item.kind === 'card' && item.card) {
+        return <StreamCard card={item.card} onBreathingDone={onBreathingDone} />;
+      }
       const isAssistant = item.role === 'assistant';
       const content = displayContent(item);
       return (
@@ -81,7 +112,7 @@ export default function ConversationStream() {
         </View>
       );
     },
-    [isStreaming],
+    [isStreaming, onBreathingDone],
   );
 
   return (
@@ -153,6 +184,44 @@ const styles = StyleSheet.create({
     color: Colors.textTertiary,
     textTransform: 'uppercase',
     letterSpacing: 1,
+  },
+  receipt: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    gap: 7,
+    backgroundColor: Colors.surface,
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    marginBottom: 8,
+  },
+  receiptDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  receiptText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  banner: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderStyle: 'dashed',
+    paddingTop: 8,
+    marginVertical: 8,
+  },
+  bannerResistance: {
+    borderTopColor: 'rgba(232,98,74,0.5)',
+  },
+  bannerObservation: {
+    borderTopColor: 'rgba(91,159,255,0.4)',
+  },
+  bannerText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
 });
 

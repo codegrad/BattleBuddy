@@ -44,6 +44,13 @@ const QL_LABEL: Record<Exclude<QuickLogKind, 'urge'>, string> = {
   decision: 'decision · conscious choice',
 };
 
+// Same client-side triggers as the web head's live mode: an urge flips
+// phase and leads with the Rule of Three (action before questions); a
+// journey question puts the map in the stream where BB can talk to it.
+const URGE_RE = /(urge|craving|about to (smoke|light)|need help|it'?s loud|want one)/i;
+const NOT_RESISTING_RE = /not (trying|resisting)/i;
+const JOURNEY_RE = /(how am i doing|journey|progress|show me|reflect)/i;
+
 // The One Conversation surface: one screen, one stream, three views over it.
 // Home and Content are lenses; everything routes back into the conversation.
 export default function SessionScreen() {
@@ -66,12 +73,34 @@ export default function SessionScreen() {
   const startSession = useSessionStore((s) => s.startSession);
   const setProfileSummary = useSessionStore((s) => s.setProfileSummary);
   const setRecentHistory = useSessionStore((s) => s.setRecentHistory);
+  const addReceipt = useSessionStore((s) => s.addReceipt);
+  const addCard = useSessionStore((s) => s.addCard);
+  const addPhaseBanner = useSessionStore((s) => s.addPhaseBanner);
   const userId = useAuthStore((s) => s.user?.id ?? null);
   const onSelfEngaged = useEngagementEngine((s) => s.onUserSelfEngaged);
   const { sendMessage, greet, abort } = useSessionChat();
 
-  // Phase 4 wires this to urge detection + the resistance flow.
-  const [phase] = useState<SessionPhase>('observation');
+  // Observation is the resting state; an urge flips the surface into
+  // resistance — chip, banner, and the entity's color all say "I'm right
+  // here" until the wave is ridden out. The ref keeps the current phase
+  // readable synchronously so the banner lands in the stream BEFORE the
+  // turn that caused the flip (store writes inside a setState updater run
+  // during render — React forbids it, and it reordered the stream).
+  const [phase, setPhaseState] = useState<SessionPhase>('observation');
+  const phaseRef = useRef<SessionPhase>('observation');
+
+  const setPhase = useCallback(
+    (to: SessionPhase) => {
+      if (phaseRef.current === to) return;
+      phaseRef.current = to;
+      addPhaseBanner(to);
+      Haptics.impactAsync(
+        to === 'resistance' ? Haptics.ImpactFeedbackStyle.Heavy : Haptics.ImpactFeedbackStyle.Light,
+      ).catch(() => {});
+      setPhaseState(to);
+    },
+    [addPhaseBanner],
+  );
 
   useEffect(() => {
     onSelfEngaged();
@@ -97,12 +126,47 @@ export default function SessionScreen() {
     greet();
   }, [hasGreeted, isActive, startSession, setProfileSummary, setRecentHistory, greet]);
 
+  const handleUserTurn = useCallback(
+    (text: string) => {
+      if (URGE_RE.test(text) && !NOT_RESISTING_RE.test(text)) {
+        setPhase('resistance');
+        addCard({ type: 'breathing' });
+      } else if (JOURNEY_RE.test(text)) {
+        addCard({ type: 'heatmap' });
+        addCard({ type: 'records' });
+      }
+      sendMessage(text);
+    },
+    [sendMessage, setPhase, addCard],
+  );
+
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || isStreaming) return;
     setInput('');
-    sendMessage(text);
-  }, [input, isStreaming, sendMessage]);
+    handleUserTurn(text);
+  }, [input, isStreaming, handleUserTurn]);
+
+  // The wave was ridden out: receipt with the intensity delta, tell BB
+  // (hidden), and settle back into observation.
+  const handleBreathingDone = useCallback(
+    (from: number, to: number) => {
+      addReceipt('resisted', `urge ridden out · ${from}→${to}`);
+      if (userId) {
+        logEvent(userId, 'urge_resisted', {
+          source: 'one-conversation',
+          exercise: 'rule_of_three',
+          intensity_start: from,
+          intensity_end: to,
+        });
+      }
+      sendMessage(
+        `[app event: I just rode out an urge with the Rule of Three — intensity ${from} down to ${to}. Acknowledge briefly, warmly; no homework.]`,
+      );
+      setPhase('observation');
+    },
+    [addReceipt, sendMessage, setPhase, userId],
+  );
 
   // Dashboard CTAs re-enter the conversation carrying what the user was
   // looking at — the bracketed context rides to the model; the stream strips
@@ -110,20 +174,26 @@ export default function SessionScreen() {
   const handleTalk = useCallback(
     (topic: TalkAboutTopic) => {
       setView('chat');
+      // "Practice one now" runs a calm-water drill — reps make the rough
+      // water easier. No resistance phase; there's no urge to fight.
+      if (topic.userText === "Let's run one now.") {
+        addCard({ type: 'breathing' });
+      }
       sendMessage(
         `[Looking at the "${topic.title}" card on my dashboard: ${topic.detail}] ${topic.userText}`,
       );
     },
-    [sendMessage],
+    [sendMessage, addCard],
   );
 
   const handleQuickLog = useCallback(
     (kind: QuickLogKind) => {
       setView('chat');
       if (kind === 'urge') {
-        sendMessage("I'm having an urge");
+        handleUserTurn("I'm having an urge");
         return;
       }
+      addReceipt(kind, `${QL_LABEL[kind]} · quick log`);
       if (userId) {
         logEvent(userId, QL_EVENT[kind], { source: 'one-conversation', quick_log: true });
         // A conscious decision to smoke implies a cigarette — same convention
@@ -134,7 +204,7 @@ export default function SessionScreen() {
       }
       sendMessage(`[app event: I just quick-logged "${QL_LABEL[kind]}". Acknowledge briefly, per my phase.]`);
     },
-    [sendMessage, userId],
+    [sendMessage, handleUserTurn, addReceipt, userId],
   );
 
   const openChat = useCallback(() => setView('chat'), []);
@@ -173,8 +243,8 @@ export default function SessionScreen() {
     <View style={styles.container}>
       <StatusBar style="light" />
       <EntityBackground
-        targetColor={Colors.stateIdle}
-        energy={0.08}
+        targetColor={phase === 'resistance' ? Colors.coral : Colors.stateIdle}
+        energy={phase === 'resistance' ? 0.35 : 0.08}
         center={{ x: width / 2, y: height * 0.3 }}
       />
       <View style={[styles.surface, { paddingTop: insets.top }]}>
@@ -190,7 +260,7 @@ export default function SessionScreen() {
             style={styles.pane}
             onLayout={(e) => setPaneHeight(e.nativeEvent.layout.height)}
           >
-            {view === 'chat' && <ConversationStream />}
+            {view === 'chat' && <ConversationStream onBreathingDone={handleBreathingDone} />}
             {view === 'home' && <HomeDashboard onTalk={handleTalk} onQuickLog={handleQuickLog} />}
             {view === 'content' && paneHeight > 0 && (
               <ContentPane height={paneHeight} onOpenChat={openChat} />
