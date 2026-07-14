@@ -2196,7 +2196,7 @@ Return ONLY the JSON object, no markdown, no explanation.`;
   // deploy updates it with no restart (same pattern as the prompt file).
   if (req.method === 'GET' && (req.url === '/app' || req.url === '/app/')) {
     try {
-      const html = readFileSync(resolve(__dirname, '..', 'web', 'index.html'), 'utf-8');
+      const html = readFileSync(resolve(__dirname, 'web', 'index.html'), 'utf-8');
       res.writeHead(200, { ...CORS, 'Content-Type': 'text/html; charset=utf-8' });
       return res.end(html);
     } catch (err) {
