@@ -249,7 +249,10 @@ async function applyProposalsToSystemPrompt(proposalText, currentSystemPrompt) {
   // proposals add, so max_tokens must comfortably exceed the input size,
   // not just the size of the expected diff.
   const estimatedInputTokens = Math.ceil(currentSystemPrompt.length / 4);
-  const maxTokens = Math.min(16384, Math.max(8192, estimatedInputTokens + 4096));
+  // Ceiling raised to 32768: a full rewrite must reproduce the entire prompt
+  // (~17k tokens at current size) plus new content, so 16384 was already too
+  // small when the prompt exceeded ~50k chars.
+  const maxTokens = Math.min(32768, Math.max(8192, estimatedInputTokens + 4096));
 
   // Streamed rather than a plain create(): a non-streaming call generating
   // up to 16384 tokens sits idle waiting for the full response, and hit
