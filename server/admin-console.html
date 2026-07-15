@@ -143,7 +143,7 @@
   .rep-sec li .apply { flex-shrink: 0; font-size: 11px; padding: 3px 8px; }
   .rep-sec li .dismiss { flex-shrink: 0; font-size: 11px; padding: 3px 8px; color: var(--dim); }
   .rep-sec li .dismiss:hover { border-color: var(--red); color: var(--red); }
-  .inline-apply { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+  .inline-apply { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; }
   .inline-apply textarea { min-height: 64px; resize: vertical; font-size: 12.5px; }
   .inline-apply .frow { display: flex; gap: 8px; align-items: center; }
   .inline-apply .cnt { font-size: 11px; color: var(--dim); margin-left: auto; }
@@ -680,18 +680,22 @@ async function loadInsights() {
 function openInlineApply(btn) {
   const li = btn.closest('li');
   if (li.querySelector('.inline-apply')) return;
+  const ptext = li.querySelector('.ptext');
+  const dismissBtn = li.querySelector('.dismiss');
   const original = decodeURIComponent(btn.dataset.proposal);
   const suggested = original
     .replace(/^\s*(HIGH|MEDIUM|LOW)\s*CONFIDENCE\s*[—:–-]+\s*/i, '')
     .replace(/[\.\s]*\(?\s*[Tt]raceable to:[^)]*\)?\.?\s*$/, '')
     .trim();
   btn.style.display = 'none';
+  if (ptext) ptext.style.display = 'none';
+  if (dismissBtn) dismissBtn.style.display = 'none';
 
   const box = document.createElement('div');
   box.className = 'inline-apply';
   box.innerHTML = `
     <textarea spellcheck="false"></textarea>
-    <div class="frow">
+    <div class="frow" style="justify-content:flex-end">
       <input type="date" title="Optional expiry — active through the end of that day (Central)">
       <button class="btn primary ia-apply">Apply</button>
       <button class="btn ia-cancel">Cancel</button>
@@ -711,7 +715,12 @@ function openInlineApply(btn) {
   refreshCnt();
   ta2.focus();
 
-  box.querySelector('.ia-cancel').onclick = () => { box.remove(); btn.style.display = ''; };
+  box.querySelector('.ia-cancel').onclick = () => {
+    box.remove();
+    btn.style.display = '';
+    if (ptext) ptext.style.display = '';
+    if (dismissBtn) dismissBtn.style.display = '';
+  };
   box.querySelector('.ia-apply').onclick = async () => {
     const applyBtn = box.querySelector('.ia-apply');
     applyBtn.disabled = true;
