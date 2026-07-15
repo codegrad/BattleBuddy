@@ -1,10 +1,5 @@
-import { useCallback } from 'react';
-import HubHomeScreen from '../../src/components/home/HubHomeScreen';
-import { useUIStore } from '../../src/stores/uiStore';
-
-export default function AppIndex() {
-  const openDrawer = useUIStore((s) => s.openDrawer);
-  const handleOpenDrawer = useCallback(() => openDrawer(), [openDrawer]);
-
-  return <HubHomeScreen onOpenDrawer={handleOpenDrawer} />;
-}
+// The app opens straight into the One Conversation surface (Mission view).
+// The old hub (HubHomeScreen + swipe navigation) no longer launches; the
+// surface is the product. /session stays routable for deep links and
+// notifications — same screen either way.
+export { default } from './session';

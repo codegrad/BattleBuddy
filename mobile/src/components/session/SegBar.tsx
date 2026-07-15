@@ -13,8 +13,8 @@ import { Colors } from '../../theme';
 export type SessionView = 'home' | 'chat' | 'content';
 
 const SEGMENTS: { key: SessionView; label: string }[] = [
-  { key: 'home', label: 'Home' },
-  { key: 'chat', label: 'Conversation' },
+  { key: 'home', label: 'Mission' },
+  { key: 'chat', label: 'Comms' },
   { key: 'content', label: 'Content' },
 ];
 

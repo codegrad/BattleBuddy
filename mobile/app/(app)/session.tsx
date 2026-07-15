@@ -55,7 +55,9 @@ const JOURNEY_RE = /(how am i doing|journey|progress|show me|reflect)/i;
 // The One Conversation surface: one screen, one stream, three views over it.
 // Home and Content are lenses; everything routes back into the conversation.
 export default function SessionScreen() {
-  const [view, setView] = useState<SessionView>('chat');
+  // Launch lands on Mission (the dashboard); Comms is one tap away and the
+  // greeting is already streaming in when the user gets there.
+  const [view, setView] = useState<SessionView>('home');
   const [input, setInput] = useState('');
   const [paneHeight, setPaneHeight] = useState(0);
   const [hasGreeted, setHasGreeted] = useState(false);
