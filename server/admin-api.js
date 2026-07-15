@@ -33,6 +33,7 @@ import {
   loadInsightsState, saveInsightsState, proposalKey, listKnownProfiles,
 } from './contextAgent.js';
 import { runDesignLoop, AGENT_MD_VOLUME_PATH, readAgentMd } from './agentDesignLoop.js';
+import { runUXLoop, readUXDesign, writeUXDesign, loadUXLoopResult, saveUXLoopResult } from './agentUXLoop.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const consoleHtmlPath = resolve(__dirname, 'admin-console.html');
@@ -527,6 +528,49 @@ export async function handleAdminConsole(req, res, { checkAdminSecret, CORS, sen
           saveDesignLoopResult({ status: 'error', startedAt, completedAt: new Date().toISOString(), error: e.message, trigger: 'admin_console' });
         });
       return json(res, CORS, 202, { ok: true, started: true, startedAt, note: 'Running in the background — takes a few minutes. You will get an email if changes are applied.' });
+    }
+
+    // ── UX design loop ────────────────────────────────────────────────────────
+
+    if (req.method === 'GET' && url === '/admin/console/ux-loop/status') {
+      return json(res, CORS, 200, loadUXLoopResult() || { status: 'never_run' });
+    }
+
+    if (req.method === 'POST' && url === '/admin/console/ux-loop/run') {
+      const startedAt = new Date().toISOString();
+      saveUXLoopResult({ status: 'running', startedAt, stage: 'Starting', trigger: 'admin_console' });
+      const onProgress = (stage) => {
+        const cur = loadUXLoopResult() || {};
+        if (cur.status === 'running') saveUXLoopResult({ ...cur, stage });
+      };
+      runUXLoop({ trigger: 'admin_console', onProgress })
+        .then(r => {
+          saveUXLoopResult({
+            status: 'done', startedAt, completedAt: new Date().toISOString(),
+            changed: r.changed, applied: r.applied, total: r.total,
+            sessions: r.sessions, users: r.users, trigger: 'admin_console',
+            proposals: (r.proposals || '').slice(0, 12000),
+          });
+          console.log(`[UXLoop] Run finished: ${r.changed ? `${r.applied} patch(es) applied` : 'no changes'}`);
+        })
+        .catch(e => {
+          console.error('[UXLoop] Run failed:', e.message);
+          saveUXLoopResult({ status: 'error', startedAt, completedAt: new Date().toISOString(), error: e.message, trigger: 'admin_console' });
+        });
+      return json(res, CORS, 202, { ok: true, started: true, startedAt });
+    }
+
+    if (req.method === 'GET' && url === '/admin/console/ux-design') {
+      return json(res, CORS, 200, { content: readUXDesign() });
+    }
+
+    if (req.method === 'POST' && url === '/admin/console/ux-design') {
+      const { content } = JSON.parse(await readBody(req));
+      if (typeof content !== 'string' || content.trim().length < 10) {
+        return json(res, CORS, 400, { error: 'ux-design.md content missing.' });
+      }
+      writeUXDesign(content);
+      return json(res, CORS, 200, { ok: true });
     }
 
     // The design doc the loop reasons over. The repo copy isn't in the
