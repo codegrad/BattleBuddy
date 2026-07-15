@@ -666,7 +666,10 @@ function openInlineApply(btn) {
   const li = btn.closest('li');
   if (li.querySelector('.inline-apply')) return;
   const original = decodeURIComponent(btn.dataset.proposal);
-  const suggested = original.replace(/^\s*(HIGH|MEDIUM|LOW)\s*CONFIDENCE\s*[—:–-]+\s*/i, '').trim();
+  const suggested = original
+    .replace(/^\s*(HIGH|MEDIUM|LOW)\s*CONFIDENCE\s*[—:–-]+\s*/i, '')
+    .replace(/[\.\s]*\(?\s*[Tt]raceable to:[^)]*\)?\.?\s*$/, '')
+    .trim();
   btn.style.display = 'none';
 
   const box = document.createElement('div');
@@ -685,8 +688,8 @@ function openInlineApply(btn) {
   const cnt = box.querySelector('.cnt');
   const refreshCnt = () => {
     const n = ta2.value.trim().length;
-    cnt.textContent = `${n} / 500`;
-    cnt.classList.toggle('over', n > 500);
+    cnt.textContent = `${n} / 1000`;
+    cnt.classList.toggle('over', n > 1000);
   };
   ta2.value = suggested;
   ta2.addEventListener('input', refreshCnt);
@@ -756,7 +759,7 @@ $('ins-run').onclick = async () => {
   } finally { btn.disabled = false; }
 };
 
-const DIR_MAX = 500;
+const DIR_MAX = 1000;
 $('dir-text').addEventListener('input', () => {
   const n = $('dir-text').value.trim().length;
   const el = $('dir-count');

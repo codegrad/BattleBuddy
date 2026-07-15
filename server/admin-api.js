@@ -45,7 +45,7 @@ const REQUIRED_PLACEHOLDERS = [
   '{{life_architecture}}', '{{session_context}}', '{{relevant_memories}}',
 ];
 
-const MAX_DIRECTIVE_CHARS = 500;
+const MAX_DIRECTIVE_CHARS = 1000;
 const MAX_RESOURCE_CHARS = 200000;
 
 function json(res, CORS, status, payload) {
