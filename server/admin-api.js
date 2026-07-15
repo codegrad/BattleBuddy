@@ -36,6 +36,15 @@ import { runDesignLoop, AGENT_MD_VOLUME_PATH, readAgentMd } from './agentDesignL
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const consoleHtmlPath = resolve(__dirname, 'admin-console.html');
+const DESIGN_LOOP_RESULT_PATH = resolve(ADMIN_DATA_ROOT, 'design-loop-last-result.json');
+
+function loadDesignLoopResult() {
+  try { return JSON.parse(readFileSync(DESIGN_LOOP_RESULT_PATH, 'utf-8')); } catch { return null; }
+}
+function saveDesignLoopResult(data) {
+  mkdirSync(ADMIN_DATA_ROOT, { recursive: true });
+  writeFileSync(DESIGN_LOOP_RESULT_PATH, JSON.stringify(data, null, 2));
+}
 
 // Every one of these must survive a prompt edit — buildSystemPrompt fills them
 // per turn, and .replace() silently no-ops on a missing placeholder, so losing
@@ -487,14 +496,27 @@ export async function handleAdminConsole(req, res, { checkAdminSecret, CORS, sen
     }
 
     // ─── Design loop (runs in-process; no dependence on a dev machine) ─────
+    if (req.method === 'GET' && url === '/admin/console/design-loop/status') {
+      return json(res, CORS, 200, loadDesignLoopResult() || { status: 'never_run' });
+    }
+
     if (req.method === 'POST' && url === '/admin/console/design-loop/run') {
-      // Fire-and-forget: a full run takes minutes (two Sonnet passes), far
-      // longer than an HTTP request should hang. Result lands in the logs
-      // and, when RESEND_API_KEY is set, in Mike's inbox.
+      const startedAt = new Date().toISOString();
+      saveDesignLoopResult({ status: 'running', startedAt, trigger: 'admin_console' });
       runDesignLoop({ email: true, trigger: 'admin_console' })
-        .then(r => console.log(`[DesignLoop] On-demand run finished: ${r.changed ? 'prompt updated' : 'no changes applied'}`))
-        .catch(e => console.error('[DesignLoop] On-demand run failed:', e.message));
-      return json(res, CORS, 202, { ok: true, started: true, note: 'Running in the background — takes a few minutes. You will get an email if changes are applied.' });
+        .then(r => {
+          console.log(`[DesignLoop] On-demand run finished: ${r.changed ? 'prompt updated' : 'no changes applied'}`);
+          saveDesignLoopResult({
+            status: 'done', startedAt, completedAt: new Date().toISOString(),
+            changed: r.changed, summary: r.summary || null,
+            users: r.users, sessions: r.sessions, trigger: 'admin_console',
+          });
+        })
+        .catch(e => {
+          console.error('[DesignLoop] On-demand run failed:', e.message);
+          saveDesignLoopResult({ status: 'error', startedAt, completedAt: new Date().toISOString(), error: e.message, trigger: 'admin_console' });
+        });
+      return json(res, CORS, 202, { ok: true, started: true, startedAt, note: 'Running in the background — takes a few minutes. You will get an email if changes are applied.' });
     }
 
     // The design doc the loop reasons over. The repo copy isn't in the
