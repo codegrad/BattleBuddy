@@ -825,8 +825,10 @@ function showDlResult(r) {
   const hist = dlHistoryHtml(r.history);
   if (r.status === 'running') {
     box.className = 'dl-box running';
-    box.innerHTML = `${close}<div class="dl-title"><span style="animation:spin 1s linear infinite;display:inline-block">⟳</span> Design loop running</div><div class="dl-elapsed" style="font-size:11.5px;color:var(--dim);margin-top:4px">Loading profiles · 0s</div>`;
-    startElapsedCounter(r.startedAt);
+    if (!dlElapsedTimer) {
+      box.innerHTML = `${close}<div class="dl-title"><span style="animation:spin 1s linear infinite;display:inline-block">⟳</span> Design loop running</div><div class="dl-elapsed" style="font-size:11.5px;color:var(--dim);margin-top:4px">${escapeHtml(r.stage || 'Starting')} · 0s</div>`;
+      startElapsedCounter(r.startedAt, r.stage);
+    }
   } else if (r.status === 'error') {
     box.className = 'dl-box err';
     box.innerHTML = `${close}<div class="dl-title">✕ Design loop failed</div><div class="dl-summary">${escapeHtml(r.error || 'Unknown error')}</div>${hist}`;
@@ -845,19 +847,18 @@ let dlPollTimer = null, dlElapsedTimer = null;
 function stopDlPoll() { if (dlPollTimer) { clearInterval(dlPollTimer); dlPollTimer = null; } }
 function stopDlElapsed() { if (dlElapsedTimer) { clearInterval(dlElapsedTimer); dlElapsedTimer = null; } }
 
-function startElapsedCounter(startedAt) {
+let dlCurrentStage = 'Starting';
+function startElapsedCounter(startedAt, initialStage) {
   stopDlElapsed();
+  dlCurrentStage = initialStage || 'Starting';
   const box = $('dl-box');
   const start = startedAt ? new Date(startedAt).getTime() : Date.now();
-  const stages = ['Loading profiles', 'Analyzing signals', 'Proposing updates', 'Applying changes'];
   dlElapsedTimer = setInterval(() => {
     const elapsed = Math.floor((Date.now() - start) / 1000);
     const mins = Math.floor(elapsed / 60), secs = elapsed % 60;
     const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-    // Advance stage roughly every 45s across a ~3 min run
-    const stageIdx = Math.min(Math.floor(elapsed / 45), stages.length - 1);
     const el = box.querySelector('.dl-elapsed');
-    if (el) el.textContent = `${stages[stageIdx]} · ${timeStr}`;
+    if (el) el.textContent = `${dlCurrentStage} · ${timeStr}`;
   }, 1000);
 }
 
@@ -867,6 +868,9 @@ async function pollDlStatus(startedAt) {
   dlPollTimer = setInterval(async () => {
     try {
       const r = await api('/admin/console/design-loop/status');
+      if (r.status === 'running' && r.stage && r.stage !== dlCurrentStage) {
+        dlCurrentStage = r.stage;
+      }
       showDlResult(r);
       if (r.status !== 'running' && r.startedAt === startedAt) {
         stopDlPoll();

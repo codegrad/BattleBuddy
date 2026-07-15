@@ -508,8 +508,12 @@ export async function handleAdminConsole(req, res, { checkAdminSecret, CORS, sen
 
     if (req.method === 'POST' && url === '/admin/console/design-loop/run') {
       const startedAt = new Date().toISOString();
-      saveDesignLoopResult({ status: 'running', startedAt, trigger: 'admin_console' });
-      runDesignLoop({ email: true, trigger: 'admin_console' })
+      saveDesignLoopResult({ status: 'running', startedAt, stage: 'Starting', trigger: 'admin_console' });
+      const onProgress = (stage) => {
+        const cur = loadDesignLoopResult() || {};
+        if (cur.status === 'running') saveDesignLoopResult({ ...cur, stage });
+      };
+      runDesignLoop({ email: true, trigger: 'admin_console', onProgress })
         .then(r => {
           console.log(`[DesignLoop] On-demand run finished: ${r.changed ? 'prompt updated' : 'no changes applied'}`);
           saveDesignLoopResult({

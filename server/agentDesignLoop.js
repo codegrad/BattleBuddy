@@ -459,7 +459,8 @@ async function sendAppliedEmail(appliedSummary, digest) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export async function runDesignLoop({ email = false, dryRun = false, remote = false, trigger = 'cli' } = {}) {
+export async function runDesignLoop({ email = false, dryRun = false, remote = false, trigger = 'cli', onProgress = null } = {}) {
+  const progress = (stage) => { if (onProgress) onProgress(stage); };
   console.log(`[DesignLoop] Starting agent design loop (trigger: ${trigger})...`);
 
   if (!existsSync(SYSTEM_PROMPT)) {
@@ -468,6 +469,7 @@ export async function runDesignLoop({ email = false, dryRun = false, remote = fa
 
   // Design doc: volume copy > repo copy > (last resort) the system prompt
   // itself, which is the live behavioral document.
+  progress('Loading agent doc');
   const agentMdInfo = readAgentMd();
   const systemPromptBefore = readFileSync(SYSTEM_PROMPT, 'utf-8');
   const agentMd = agentMdInfo.content || systemPromptBefore;
@@ -476,6 +478,7 @@ export async function runDesignLoop({ email = false, dryRun = false, remote = fa
   }
   console.log(`[DesignLoop] Loaded agent.md from ${agentMdInfo.source} (${agentMd.length} chars), system prompt (${systemPromptBefore.length} chars)`);
 
+  progress('Loading profiles');
   const profiles = await loadAllProfiles(remote);
   if (profiles.length === 0) {
     throw new Error(`No user profiles found in ${STORE_DIR}`);
@@ -490,12 +493,14 @@ export async function runDesignLoop({ email = false, dryRun = false, remote = fa
     return { ok: true, dryRun: true, changed: false, users: digest.totalUsers, sessions: digest.totalSessions };
   }
 
+  progress('Analyzing signals');
   console.log('[DesignLoop] Calling Sonnet to analyze and propose updates...');
   const proposals = await proposeDesignUpdates(agentMd, digest);
 
   const proposalPath = writeProposal(proposals, digest);
   console.log(`[DesignLoop] Proposal written to: ${proposalPath}`);
 
+  progress('Applying changes');
   console.log('[DesignLoop] Auto-applying HIGH confidence proposals to system prompt...');
   const systemPromptAfter = await applyProposalsToSystemPrompt(proposals, systemPromptBefore);
 
