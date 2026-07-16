@@ -167,6 +167,52 @@
 
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* ─── Mobile ─── */
+  @media (max-width: 640px) {
+    /* Header: logo + status on one row, nav scrolls below */
+    header { flex-wrap: wrap; padding: 10px 14px 0; }
+    header h1 { padding-bottom: 8px; }
+    #status { padding-bottom: 8px; max-width: 55%; }
+    nav { order: 3; width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; border-top: 1px solid var(--border); padding: 4px 0; gap: 0; }
+    nav::-webkit-scrollbar { display: none; }
+    nav button { flex-shrink: 0; padding: 9px 14px; font-size: 12.5px; }
+
+    /* Touch targets */
+    button.btn { min-height: 42px; }
+    select { min-height: 42px; padding: 8px 10px; }
+    input[type=text], input[type=date], textarea { font-size: 16px; } /* prevent iOS zoom */
+
+    /* Toolbars: wrap, meta goes full-width below buttons */
+    .toolbar { padding: 10px 14px; flex-wrap: wrap; gap: 8px; }
+    .toolbar .meta { margin-left: 0; width: 100%; order: 99; }
+    #dl-last-run, #ux-last-run { width: 100%; order: 98; font-size: 12px; margin-top: 2px; }
+
+    /* Overview */
+    #dash { padding: 12px; }
+
+    /* Prompt: stack textarea above diff pane when diff is open */
+    #prompt-split { flex-direction: column; }
+    #prompt-text { font-size: 14px; padding: 12px 14px; }
+    footer.note { padding: 8px 14px; }
+    #diff-pane { width: 100%; border-left: none; border-top: 1px solid var(--border); }
+
+    /* List tabs (Resources, Directives): stack vertically */
+    .list-tab { flex-direction: column; }
+    .list-col { width: 100%; border-right: none; border-bottom: 1px solid var(--border); flex: none; height: 40vh; }
+    .detail { padding: 12px 14px; }
+
+    /* Insights */
+    #ins-scroll { padding: 12px 14px; }
+    #dl-result { padding: 0 14px; }
+    .rep-sec li { flex-wrap: wrap; }
+
+    /* UX tab: stack proposals above doc */
+    .ux-cols { flex-direction: column !important; }
+    .ux-col-proposals { border-right: none !important; border-bottom: 1px solid var(--border); flex: 0 0 40vh !important; }
+    .ux-col-doc { flex: 1; min-height: 0; }
+    #ux-doc-text { font-size: 14px; }
+  }
+
   /* Auth gate */
   #gate { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 10; }
   #gate .box { display: flex; flex-direction: column; gap: 12px; width: 320px; }
@@ -282,14 +328,14 @@
     </div>
     <div id="ux-result"><div class="dl-box" id="ux-box"></div></div>
 
-    <div style="display:flex;gap:0;flex:1;min-height:0;overflow:hidden">
+    <div class="ux-cols" style="display:flex;gap:0;flex:1;min-height:0;overflow:hidden">
       <!-- Proposals column -->
-      <div style="flex:1;display:flex;flex-direction:column;border-right:1px solid var(--border);overflow:hidden">
+      <div class="ux-col-proposals" style="flex:1;display:flex;flex-direction:column;border-right:1px solid var(--border);overflow:hidden">
         <div style="padding:10px 14px 6px;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--dim);text-transform:uppercase">Latest proposals</div>
         <div id="ux-proposals" style="flex:1;overflow-y:auto;padding:0 14px 14px;font-size:12.5px;white-space:pre-wrap;line-height:1.55;color:var(--text)"><div class="empty">Run the UX loop to generate proposals.</div></div>
       </div>
       <!-- UX design doc column -->
-      <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+      <div class="ux-col-doc" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
         <div class="toolbar" style="border-top:none;border-bottom:1px solid var(--border);padding:8px 14px">
           <button class="btn primary" id="ux-doc-save">Save</button>
           <button class="btn" id="ux-doc-reset">Reset</button>
