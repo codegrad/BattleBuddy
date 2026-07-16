@@ -1,14 +1,18 @@
 /**
- * Vector Store — Postgres full-text-search-backed memory for BattleBuddy.
+ * Vector Store — Postgres pgvector-backed semantic memory for BattleBuddy.
  *
  * Stores observations, triggers, session summaries, and insights into a
- * Supabase `user_memories` table. Retrieval uses ts_rank over a GIN-indexed
- * tsvector column — no external embedding service required.
+ * Supabase `user_memories` table, embedded via server/embeddings.js
+ * (self-hosted, in-process — see that file for why). Retrieval ranks by
+ * cosine similarity (match_user_memories RPC) instead of keyword overlap,
+ * so a query surfaces memories that resemble it in meaning, not just ones
+ * sharing literal words.
  */
 
 import { createClient } from '@supabase/supabase-js';
 import WebSocket from 'ws';
 import { resolveUserId } from './contextAgent.js';
+import { embed } from './embeddings.js';
 
 let supabase = null;
 let initialized = false;
@@ -50,10 +54,12 @@ export async function embedAndStore(userId, content, type, sessionId = null) {
   const canonicalUserId = resolveUserId(userId);
 
   try {
+    const embedding = await embed(content);
     const { error } = await supabase.from('user_memories').insert({
       user_id: canonicalUserId,
       content,
       type,
+      embedding,
     });
     if (error) {
       console.error('[VectorStore] Insert failed:', error.message);
@@ -80,9 +86,10 @@ export async function retrieveRelevant(userId, queryText, limit = 10) {
   const canonicalUserId = resolveUserId(userId);
 
   try {
+    const queryEmbedding = await embed(queryText);
     const { data, error } = await supabase.rpc('match_user_memories', {
       match_user_id: canonicalUserId,
-      query_text: queryText,
+      query_embedding: queryEmbedding,
       match_count: limit,
     });
 
