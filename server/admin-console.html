@@ -395,10 +395,15 @@ $('gate-secret').addEventListener('keydown', e => { if (e.key === 'Enter') $('ga
 if (secret) unlock(secret); else $('gate-secret').focus();
 
 // ─── Tabs ────────────────────────────────────────────────────────────────────
+let dashTimer = null;
 function showTab(name) {
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x.dataset.tab === name));
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.id === 'tab-' + name));
-  if (name === 'overview') loadDashboard();
+  clearInterval(dashTimer); dashTimer = null;
+  if (name === 'overview') {
+    loadDashboard();
+    dashTimer = setInterval(loadDashboard, 30000);
+  }
 }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 $('logo').onclick = () => showTab('overview');
