@@ -420,10 +420,16 @@ async function loadDashboard() {
     const latestScore = latestOf(d.memoryScores);
     const latestPerf = latestOf(d.performanceScores);
 
+    const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000;
+    const activeUsers7d = d.users.filter(u => u.lastSessionAt && new Date(u.lastSessionAt).getTime() > sevenDaysAgo).length;
+    const resisted7d = sum(last7, 'resisted'), gaveIn7d = sum(last7, 'gaveIn');
+    const resistTotal = resisted7d + gaveIn7d;
+    const resistRate = resistTotal > 0 ? `${Math.round(resisted7d / resistTotal * 100)}<small>%</small>` : '—';
+
     const stats = [
+      { v: activeUsers7d || d.totals.users, l: activeUsers7d ? 'Active users · 7d' : 'Total users' },
       { v: sum(last7, 'sessions'), l: 'Sessions · 7d' },
-      { v: sum(last7, 'resisted'), l: 'Urges resisted · 7d' },
-      { v: sum(last7, 'cigarettes'), l: 'Cigarettes · 7d' },
+      { v: resistRate, l: `Resist rate · 7d${resistTotal ? ` (${resistTotal} urges)` : ''}` },
       { v: latestPerf !== null ? `${latestPerf}<small>/10</small>` : '—', l: 'Agent score' },
       { v: latestScore !== null ? `${latestScore}<small>/10</small>` : '—', l: 'Memory score' },
     ];
