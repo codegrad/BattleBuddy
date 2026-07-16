@@ -60,6 +60,8 @@ export default function BreathingCard({ onDone }: BreathingCardProps) {
     const cycle = () => {
       breath++;
       setLabel(`Breath ${breath} of ${BREATHS} — in…`);
+      // A light pulse marks each inhale — pacing you can feel with eyes shut.
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       scale.value = withTiming(1.35, { duration: BREATH_MS, easing: Easing.inOut(Easing.ease) });
       schedule(() => {
         setLabel(`Breath ${breath} of ${BREATHS} — out…`);

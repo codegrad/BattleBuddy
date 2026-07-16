@@ -7,9 +7,12 @@ interface CardOverlayProps {
   text?: string;
   onHelpedTap: () => void;
   helped: boolean;
+  /** "Talk about this" — carries the card into the conversation as a
+      reply-quote (One Conversation surface). Hidden when not provided. */
+  onTalkTap?: () => void;
 }
 
-export default function CardOverlay({ text, onHelpedTap, helped }: CardOverlayProps) {
+export default function CardOverlay({ text, onHelpedTap, helped, onTalkTap }: CardOverlayProps) {
   return (
     <>
       <LinearGradient
@@ -40,6 +43,12 @@ export default function CardOverlay({ text, onHelpedTap, helped }: CardOverlayPr
             {helped ? 'Helped' : 'This helped'}
           </Text>
         </TouchableOpacity>
+        {onTalkTap && (
+          <TouchableOpacity style={styles.helpedButton} onPress={onTalkTap} activeOpacity={0.7}>
+            <Ionicons name="chatbubble-outline" size={22} color="rgba(255,255,255,0.9)" />
+            <Text style={styles.helpedLabel}>Talk</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </>
   );

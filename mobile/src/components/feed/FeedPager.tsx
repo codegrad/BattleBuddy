@@ -23,6 +23,9 @@ interface FeedPagerProps {
   /** Page height when the pager lives inside a smaller pane (the One
       Conversation content tab). Defaults to the full screen. */
   pageHeight?: number;
+  /** "Talk about this" on a card — routes it into the conversation as a
+      reply-quote. Cards show the Talk affordance only when provided. */
+  onTalk?: (card: FeedCard) => void;
 }
 
 export default function FeedPager({
@@ -32,6 +35,7 @@ export default function FeedPager({
   cardEngagements,
   onHelpedTap,
   pageHeight = SCREEN_HEIGHT,
+  onTalk,
 }: FeedPagerProps) {
   const [activeIndex, setActiveIndex] = useState(0);
 
@@ -53,6 +57,7 @@ export default function FeedPager({
     ({ item, index }: { item: FeedCard; index: number }) => {
       const helped = cardEngagements[item.id]?.helped ?? false;
       const isActive = index === activeIndex;
+      const onTalkTap = onTalk ? () => onTalk(item) : undefined;
 
       return (
         <View style={[styles.page, { height: pageHeight }]}>
@@ -63,6 +68,7 @@ export default function FeedPager({
               isActive={isActive}
               onHelpedTap={() => onHelpedTap(item.id)}
               helped={helped}
+              onTalkTap={onTalkTap}
             />
           )}
           {item.type === 'image_text' && item.mediaUri && (
@@ -71,6 +77,7 @@ export default function FeedPager({
               overlayText={item.overlayText ?? ''}
               onHelpedTap={() => onHelpedTap(item.id)}
               helped={helped}
+              onTalkTap={onTalkTap}
             />
           )}
           {item.type === 'text' && (
@@ -78,6 +85,7 @@ export default function FeedPager({
               text={item.overlayText ?? ''}
               onHelpedTap={() => onHelpedTap(item.id)}
               helped={helped}
+              onTalkTap={onTalkTap}
             />
           )}
           {item.type === 'chat' && (
@@ -86,7 +94,7 @@ export default function FeedPager({
         </View>
       );
     },
-    [activeIndex, cardEngagements, onHelpedTap, onOpenChat, pageHeight],
+    [activeIndex, cardEngagements, onHelpedTap, onOpenChat, pageHeight, onTalk],
   );
 
   return (

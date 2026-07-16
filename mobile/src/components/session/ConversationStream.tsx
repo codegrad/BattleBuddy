@@ -29,11 +29,12 @@ function displayParts(m: SessionMessage): { quote?: { title: string; text: strin
       const text = m.content.slice(close + 1).trim();
       const titleMatch = inner.match(/"([^"]+)"/);
       const colon = inner.indexOf(': ');
+      const title = titleMatch ? titleMatch[1] : 'From your dashboard';
+      let quoteText = colon >= 0 ? inner.slice(colon + 2) : inner;
+      // Content-card quotes repeat the title as the whole detail — show it once.
+      if (quoteText.replace(/^"|"$/g, '') === title) quoteText = '';
       return {
-        quote: {
-          title: titleMatch ? titleMatch[1] : 'From your dashboard',
-          text: colon >= 0 ? inner.slice(colon + 2) : inner,
-        },
+        quote: { title, text: quoteText },
         text,
       };
     }
@@ -123,7 +124,9 @@ export default function ConversationStream({ onBreathingDone }: ConversationStre
           {quote && (
             <View style={styles.replyQuote}>
               <Text style={styles.rqTitle}>{quote.title}</Text>
-              <Text style={styles.rqText} numberOfLines={2}>{quote.text}</Text>
+              {quote.text ? (
+                <Text style={styles.rqText} numberOfLines={2}>{quote.text}</Text>
+              ) : null}
             </View>
           )}
           {isAssistant && item.content ? (

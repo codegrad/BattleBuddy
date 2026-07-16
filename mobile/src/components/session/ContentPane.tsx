@@ -13,12 +13,14 @@ interface ContentPaneProps {
   height: number;
   /** "Talk" affordances route back into the conversation, same surface. */
   onOpenChat: () => void;
+  /** Per-card "Talk about this" — becomes a reply-quoted turn in Comms. */
+  onTalk: (card: FeedCard) => void;
 }
 
 // The Content tab of the One Conversation surface: the existing vertical
 // video pager, sized to the pane between the seg bar and the dock instead
 // of the full screen.
-export default function ContentPane({ height, onOpenChat }: ContentPaneProps) {
+export default function ContentPane({ height, onOpenChat, onTalk }: ContentPaneProps) {
   const [cards, setCards] = useState<FeedCard[] | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [cardEngagements, setCardEngagements] = useState<Record<string, { helped: boolean }>>({});
@@ -83,6 +85,7 @@ export default function ContentPane({ height, onOpenChat }: ContentPaneProps) {
       cardEngagements={cardEngagements}
       onHelpedTap={handleHelpedTap}
       pageHeight={height}
+      onTalk={onTalk}
     />
   );
 }

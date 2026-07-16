@@ -1,9 +1,8 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import CardOverlay from './CardOverlay';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface VideoCardProps {
   videoUri: string;
@@ -11,9 +10,10 @@ interface VideoCardProps {
   isActive: boolean;
   onHelpedTap: () => void;
   helped: boolean;
+  onTalkTap?: () => void;
 }
 
-export default function VideoCard({ videoUri, overlayText, isActive, onHelpedTap, helped }: VideoCardProps) {
+export default function VideoCard({ videoUri, overlayText, isActive, onHelpedTap, helped, onTalkTap }: VideoCardProps) {
   const player = useVideoPlayer(videoUri, (p) => {
     p.loop = true;
     p.muted = true;
@@ -39,15 +39,18 @@ export default function VideoCard({ videoUri, overlayText, isActive, onHelpedTap
         text={overlayText}
         onHelpedTap={onHelpedTap}
         helped={helped}
+        onTalkTap={onTalkTap}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  // Fill whatever page the pager gives us — a hardcoded screen height
+  // overflows the One Conversation content pane and clips the action rail.
   container: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT,
+    flex: 1,
+    width: '100%',
     backgroundColor: '#1C1C1E',
   },
   video: {

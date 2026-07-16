@@ -14,12 +14,12 @@ import { Colors } from '../../theme';
 
 export type SessionPhase = 'observation' | 'resistance';
 
-// Same state → color convention as the hub entity and the voice screen:
-// blue = idle/listening, green = hearing the user, coral = Buddy talking/thinking.
+// Presence colors per the One Conversation spec (MOBILE-PORT §3):
+// blue = neutral/listening, orange = hearing the user, coral = responding.
 const STATE_COLOR: Record<MascotState, string> = {
   idle: Colors.stateIdle,
   listening: Colors.stateIdle,
-  user_speaking: Colors.stateUserSpeaking,
+  user_speaking: Colors.stateListening,
   speaking: Colors.coral,
   thinking: Colors.coral,
   celebrating: Colors.stateUserSpeaking,

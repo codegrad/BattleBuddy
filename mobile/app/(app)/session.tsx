@@ -13,6 +13,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import PagerView from 'react-native-pager-view';
+import type { FeedCard } from '../../src/components/feed/FeedPager';
 import EntityBackground from '../../src/components/home/EntityBackground';
 import SessionHeader, { type SessionPhase } from '../../src/components/session/SessionHeader';
 import SegBar, { type SessionView } from '../../src/components/session/SegBar';
@@ -51,6 +53,9 @@ const QL_LABEL: Record<Exclude<QuickLogKind, 'urge'>, string> = {
 const URGE_RE = /(urge|craving|about to (smoke|light)|need help|it'?s loud|want one)/i;
 const NOT_RESISTING_RE = /not (trying|resisting)/i;
 const JOURNEY_RE = /(how am i doing|journey|progress|show me|reflect)/i;
+
+// Tab order for the horizontal swipe (Phase 1a): left/right moves one view.
+const VIEW_ORDER: SessionView[] = ['home', 'chat', 'content'];
 
 // The One Conversation surface: one screen, one stream, three views over it.
 // Home and Content are lenses; everything routes back into the conversation.
@@ -212,6 +217,39 @@ export default function SessionScreen() {
 
   const openChat = useCallback(() => setView('chat'), []);
 
+  // A content card's "Talk" rides into Comms as a reply-quoted turn —
+  // same wire format as the dashboard CTAs, so the quote renders for free.
+  const handleContentTalk = useCallback(
+    (card: FeedCard) => {
+      const title = card.overlayText || 'this one';
+      setView('chat');
+      sendMessage(
+        `[I'm looking at this in my content feed: "${title}"] Let's talk about this one.`,
+      );
+    },
+    [sendMessage],
+  );
+
+  // Phase 1a: horizontal swipe between views — a native PagerView, which is
+  // built to page horizontally over vertically-scrolling children (a raw
+  // Pan gesture loses the touch to the panes' own scroll recognizers).
+  // `view` stays the single source of truth: taps call setView, and the
+  // effect below steers the pager; swipes land in onPageSelected.
+  const pagerRef = useRef<PagerView>(null);
+  const handlePageSelected = useCallback((position: number) => {
+    const next = VIEW_ORDER[position];
+    if (!next) return;
+    setView((current) => {
+      if (current === next) return current;
+      Haptics.selectionAsync().catch(() => {});
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    pagerRef.current?.setPage(VIEW_ORDER.indexOf(view));
+  }, [view]);
+
   const hand = useSettingsStore((s) => s.hand);
   const switchMode = useSessionStore((s) => s.switchMode);
 
@@ -301,16 +339,26 @@ export default function SessionScreen() {
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           keyboardVerticalOffset={0}
         >
-          <View
+          <PagerView
+            ref={pagerRef}
             style={styles.pane}
+            initialPage={VIEW_ORDER.indexOf(view)}
+            onPageSelected={(e) => handlePageSelected(e.nativeEvent.position)}
             onLayout={(e) => setPaneHeight(e.nativeEvent.layout.height)}
           >
-            {view === 'chat' && <ConversationStream onBreathingDone={handleBreathingDone} />}
-            {view === 'home' && <HomeDashboard onTalk={handleTalk} onQuickLog={handleQuickLog} />}
-            {view === 'content' && paneHeight > 0 && (
-              <ContentPane height={paneHeight} onOpenChat={openChat} />
-            )}
-          </View>
+            <View key="home" style={styles.page} collapsable={false}>
+              <HomeDashboard onTalk={handleTalk} onQuickLog={handleQuickLog} />
+            </View>
+            <View key="chat" style={styles.page} collapsable={false}>
+              <ConversationStream onBreathingDone={handleBreathingDone} />
+            </View>
+            <View key="content" style={styles.page} collapsable={false}>
+              {/* Ten video players are heavy — mount only while visible. */}
+              {view === 'content' && paneHeight > 0 ? (
+                <ContentPane height={paneHeight} onOpenChat={openChat} onTalk={handleContentTalk} />
+              ) : null}
+            </View>
+          </PagerView>
 
           {/* Voice rides above the dock, in the same conversation. */}
           {audioOn && (
@@ -361,6 +409,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   pane: {
+    flex: 1,
+  },
+  page: {
     flex: 1,
   },
   dock: {
