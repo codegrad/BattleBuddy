@@ -96,6 +96,8 @@ export default function SessionScreen() {
   // during render — React forbids it, and it reordered the stream).
   const [phase, setPhaseState] = useState<SessionPhase>('observation');
   const phaseRef = useRef<SessionPhase>('observation');
+  // When resistance began — the HUD's wave timer counts from here.
+  const [resistanceSince, setResistanceSince] = useState<number | null>(null);
 
   const setPhase = useCallback(
     (to: SessionPhase) => {
@@ -105,6 +107,7 @@ export default function SessionScreen() {
       Haptics.impactAsync(
         to === 'resistance' ? Haptics.ImpactFeedbackStyle.Heavy : Haptics.ImpactFeedbackStyle.Light,
       ).catch(() => {});
+      setResistanceSince(to === 'resistance' ? Date.now() : null);
       setPhaseState(to);
     },
     [addPhaseBanner],
@@ -154,6 +157,12 @@ export default function SessionScreen() {
     setInput('');
     handleUserTurn(text);
   }, [input, isStreaming, handleUserTurn]);
+
+  // The HUD's resistance command: straight into the Rule of Three, in Comms.
+  const handleRuleOfThree = useCallback(() => {
+    setView('chat');
+    addCard({ type: 'breathing' });
+  }, [addCard]);
 
   // The wave was ridden out: receipt with the intensity delta, tell BB
   // (hidden), and settle back into observation.
@@ -347,7 +356,14 @@ export default function SessionScreen() {
             onLayout={(e) => setPaneHeight(e.nativeEvent.layout.height)}
           >
             <View key="home" style={styles.page} collapsable={false}>
-              <HomeDashboard onTalk={handleTalk} onQuickLog={handleQuickLog} />
+              <HomeDashboard
+                phase={phase}
+                resistanceSince={resistanceSince}
+                active={view === 'home'}
+                onTalk={handleTalk}
+                onQuickLog={handleQuickLog}
+                onRuleOfThree={handleRuleOfThree}
+              />
             </View>
             <View key="chat" style={styles.page} collapsable={false}>
               <ConversationStream onBreathingDone={handleBreathingDone} />

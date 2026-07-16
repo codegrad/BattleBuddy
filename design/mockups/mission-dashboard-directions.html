@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mission dashboard — 3 directions (day 1)</title>
+<style>
+  :root {
+    --bg: #1c1c1e; --stage: #111113; --surface: #2c2c2e; --surface-2: #232326;
+    --border: #3a3a3c; --surface-light: #48484a;
+    --coral: #e8624a; --blue: #5b9fff; --green: #34c759; --amber: #ff9f0a;
+    --ink: #ffffff; --ink-2: #8e8e93; --ink-3: #636366;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  html, body { background: var(--stage); margin: 0; font-family: var(--font); color: var(--ink); }
+  .stage { max-width: 1420px; margin: 0 auto; padding: 28px 20px 60px; }
+  h1 { font-size: 26px; font-weight: 800; margin: 0 0 6px; }
+  .lede { color: var(--ink-2); font-size: 14px; max-width: 72ch; line-height: 1.5; margin: 0 0 26px; }
+  .row { display: flex; gap: 26px; flex-wrap: wrap; align-items: flex-start; }
+  .col { width: 390px; }
+  .dir-label { font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--coral); font-weight: 800; margin: 0 0 4px; }
+  .dir-name { font-size: 18px; font-weight: 800; margin: 0 0 4px; }
+  .dir-sub { font-size: 12.5px; color: var(--ink-2); line-height: 1.45; min-height: 54px; margin: 0 0 12px; }
+  .phone { width: 390px; height: 720px; background: var(--bg); border: 1px solid var(--border); border-radius: 34px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 18px 50px rgba(0,0,0,.5); }
+  .phone.short { height: 296px; margin-top: 14px; }
+  .mode-tag { font-size: 10px; letter-spacing: 1.6px; color: var(--ink-3); text-transform: uppercase; font-weight: 700; margin: 12px 0 6px; }
+
+  /* shared chrome */
+  .head { display: flex; align-items: center; gap: 8px; padding: 14px 14px 6px; }
+  .clock { line-height: 1.1; }
+  .clock .t { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .clock .d { font-size: 9px; color: var(--ink-3); letter-spacing: .5px; text-transform: uppercase; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid rgba(91,159,255,.45); background: rgba(91,159,255,.1); color: var(--blue); font-size: 9.5px; font-weight: 700; letter-spacing: 1.2px; border-radius: 999px; padding: 4px 9px; }
+  .chip.red { border-color: rgba(232,98,74,.55); background: rgba(232,98,74,.12); color: var(--coral); }
+  .chip .dot { width: 6px; height: 6px; border-radius: 3px; background: currentColor; }
+  .spacer { flex: 1; }
+  .buddy { text-align: right; line-height: 1.15; }
+  .buddy .n { font-size: 15px; font-weight: 700; }
+  .buddy .s { font-size: 11px; color: var(--ink-2); }
+  .orb { width: 22px; height: 22px; border-radius: 11px; background: var(--blue); margin-left: 8px; box-shadow: 0 0 0 3px rgba(91,159,255,.18); }
+  .orb.coral { background: var(--coral); box-shadow: 0 0 0 3px rgba(232,98,74,.2); }
+  .segrow { display: flex; align-items: center; padding: 6px 14px 8px; gap: 8px; }
+  .aa { display: flex; align-items: center; gap: 5px; color: var(--ink-2); font-weight: 700; }
+  .aa .s { font-size: 9px; } .aa .l { font-size: 13px; }
+  .aa .track { width: 56px; height: 3px; border-radius: 2px; background: var(--surface-light); position: relative; }
+  .aa .th { position: absolute; left: 45%; top: -5px; width: 13px; height: 13px; border-radius: 7px; background: var(--coral); }
+  .seg { display: flex; background: var(--surface); border-radius: 999px; padding: 3px; gap: 2px; margin-left: auto; }
+  .seg b { font-size: 11.5px; padding: 5px 10px; border-radius: 999px; color: var(--ink-2); font-weight: 600; }
+  .seg b.on { background: var(--surface-light); color: var(--ink); }
+  .body { flex: 1; overflow: hidden; padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 10px; }
+  .dock { display: flex; gap: 8px; padding: 10px 12px 16px; border-top: 1px solid var(--border); align-items: center; }
+  .dock .in { flex: 1; background: var(--surface); border-radius: 18px; padding: 9px 14px; font-size: 12.5px; color: var(--ink-3); }
+  .dock .b { width: 36px; height: 36px; border-radius: 18px; background: var(--surface-light); display: flex; align-items: center; justify-content: center; font-size: 15px; }
+  .dock .b.send { background: var(--coral); color: #fff; }
+
+  .card { background: rgba(35,35,38,.94); border: 1px solid var(--border); border-radius: 16px; padding: 12px 14px; }
+  .card h4 { margin: 0 0 2px; font-size: 13.5px; }
+  .card .sub { margin: 0 0 8px; font-size: 10.5px; color: var(--ink-2); line-height: 1.4; }
+
+  /* ---------- hero timer (shared) ---------- */
+  .hero { text-align: center; padding: 14px 14px 12px; }
+  .hero .k { font-size: 10px; letter-spacing: 2px; color: var(--ink-2); text-transform: uppercase; font-weight: 700; }
+  .hero .v { font-family: var(--mono); font-weight: 800; font-variant-numeric: tabular-nums; }
+  .hero .d { font-size: 11px; color: var(--ink-2); margin-top: 3px; }
+  .best { display: inline-flex; gap: 6px; align-items: center; margin-top: 8px; background: var(--surface); border-radius: 999px; padding: 4px 11px; font-size: 10.5px; color: var(--ink-2); }
+  .best b { color: var(--green); font-family: var(--mono); }
+
+  /* quick log */
+  .ql { display: flex; flex-wrap: wrap; gap: 7px; }
+  .ql span { border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 7px 12px; font-size: 11.5px; font-weight: 600; }
+  .ql .r { border-color: rgba(52,199,89,.6); } .ql .u { border-color: rgba(232,98,74,.7); } .ql .d2 { border-color: rgba(91,159,255,.6); }
+
+  /* A: field notes timeline */
+  .tl { display: flex; flex-direction: column; gap: 0; }
+  .tl .item { display: flex; gap: 10px; }
+  .tl .rail { width: 14px; display: flex; flex-direction: column; align-items: center; }
+  .tl .dot2 { width: 9px; height: 9px; border-radius: 5px; background: var(--ink-3); margin-top: 3px; }
+  .tl .dot2.c { background: var(--amber); } .tl .dot2.r { background: var(--green); }
+  .tl .line { flex: 1; width: 1.5px; background: var(--border); }
+  .tl .tx { flex: 1; padding-bottom: 12px; }
+  .tl .t1 { font-size: 12px; font-weight: 600; }
+  .tl .t1 small { color: var(--ink-3); font-weight: 500; font-family: var(--mono); margin-right: 6px; }
+  .tl .ctx { display: flex; gap: 5px; margin-top: 4px; flex-wrap: wrap; }
+  .tl .ctx i { font-style: normal; font-size: 9.5px; background: var(--surface); border-radius: 999px; padding: 2.5px 8px; color: var(--ink-2); }
+  .mapline { display: flex; align-items: center; gap: 9px; }
+  .mapline .bar { flex: 1; height: 5px; border-radius: 3px; background: var(--surface-light); position: relative; overflow: hidden; }
+  .mapline .bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 9%; background: var(--blue); border-radius: 3px; }
+  .mapline b { font-size: 10.5px; color: var(--blue); white-space: nowrap; }
+  .bbline { display: flex; gap: 9px; align-items: flex-start; }
+  .bbline .mini-orb { width: 14px; height: 14px; border-radius: 8px; background: var(--blue); flex: none; margin-top: 2px; }
+  .bbline p { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink); }
+  .cta { display: inline-block; margin-top: 8px; background: rgba(232,98,74,.13); color: var(--coral); font-size: 11.5px; font-weight: 700; border-radius: 999px; padding: 7px 13px; }
+  .cta.q { background: var(--surface); color: var(--ink-2); margin-left: 6px; }
+
+  /* B: HUD */
+  .gauge { position: relative; width: 240px; height: 130px; margin: 4px auto 0; overflow: hidden; }
+  .gauge svg { display: block; }
+  .gauge .num { position: absolute; left: 0; right: 0; top: 58px; text-align: center; }
+  .tiles { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .tile { background: var(--surface); border-radius: 12px; padding: 9px 10px; }
+  .tile .k { font-size: 8.5px; letter-spacing: .8px; color: var(--ink-3); text-transform: uppercase; font-weight: 700; }
+  .tile .v { font-size: 17px; font-weight: 800; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .tile .v.g { color: var(--green); } .tile .v.a { color: var(--amber); }
+  .tile .d { font-size: 8.5px; color: var(--ink-2); margin-top: 1px; }
+  .watch { display: flex; align-items: center; gap: 9px; background: rgba(255,159,10,.09); border: 1px solid rgba(255,159,10,.35); border-radius: 12px; padding: 9px 12px; }
+  .watch .ic { font-size: 15px; }
+  .watch p { margin: 0; font-size: 11px; line-height: 1.45; color: var(--ink); }
+  .watch p b { color: var(--amber); }
+  .cmd { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .cmd span { text-align: center; border-radius: 12px; padding: 12px 6px; font-size: 12.5px; font-weight: 800; letter-spacing: .6px; background: var(--surface); border: 1px solid var(--border); }
+  .cmd .urgent { background: rgba(232,98,74,.15); border-color: rgba(232,98,74,.6); color: var(--coral); }
+
+  /* C: one big thing */
+  .zen { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 0 26px; gap: 14px; }
+  .zen .v { font-family: var(--mono); font-size: 64px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -1px; }
+  .zen .k { font-size: 10px; letter-spacing: 2.4px; color: var(--ink-2); text-transform: uppercase; font-weight: 700; }
+  .zen p { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--ink-2); max-width: 30ch; }
+  .zen p b { color: var(--ink); font-weight: 600; }
+  .dots { display: flex; gap: 14px; margin-top: 6px; }
+  .dots span { width: 44px; height: 44px; border-radius: 24px; background: var(--surface); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 17px; }
+
+  /* resistance mini frames */
+  .rphone .hero .v { color: var(--coral); }
+  .wave { display: flex; align-items: center; gap: 9px; background: rgba(232,98,74,.1); border: 1px solid rgba(232,98,74,.4); border-radius: 12px; padding: 9px 12px; }
+  .wave p { margin: 0; font-size: 11px; line-height: 1.45; }
+  .wave b { font-family: var(--mono); color: var(--coral); }
+  .streakrow { display: flex; gap: 8px; }
+  .streakrow .tile { flex: 1; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <h1>Mission dashboard — three directions, all drawn for Day 1</h1>
+  <p class="lede">
+    Every frame shows a user who installed the app this morning and has logged three moments — no weeks of history to lean on.
+    Common spine across all three, from the cessation evidence: <b>Time Since Last is the hero everywhere</b> (self-monitoring alone reduces smoking);
+    a <b>personal-best shown beside it</b> so a cigarette never reads as reset-to-zero (abstinence-violation effect);
+    <b>logging is the primary action</b> and every log visibly enriches "the map" (engagement is the outcome that predicts quitting);
+    and in resistance, the <b>wave timer</b> leads, because urges crest and break in minutes. Below each direction: its Resistance-phase variant.
+  </p>
+
+  <div class="row">
+    <!-- ══════════════ DIRECTION A — FIELD NOTES ══════════════ -->
+    <div class="col">
+      <p class="dir-label">Direction A</p>
+      <p class="dir-name">Field Notes</p>
+      <p class="dir-sub">The observation phase as a naturalist's journal. Hero timer, then <b>today as a timeline of logged moments</b> with context chips — the ritual map builds visibly in front of you, and BB reflects one observation back.</p>
+      <div class="phone">
+        <div class="head">
+          <div class="clock"><div class="t">9:41 AM</div><div class="d">Tue, Jul 14 · Day 1</div></div>
+          <span class="chip"><span class="dot"></span>OBSERVATION</span>
+          <div class="spacer"></div>
+          <div class="buddy"><div class="n">Buddy</div><div class="s">listening</div></div>
+          <div class="orb"></div>
+        </div>
+        <div class="segrow">
+          <span class="aa"><span class="s">A</span><span class="track"><span class="th"></span></span><span class="l">A</span></span>
+          <div class="seg"><b class="on">Mission</b><b>Comms</b><b>Content</b></div>
+        </div>
+        <div class="body">
+          <div class="hero">
+            <div class="k">Since your last one</div>
+            <div class="v" style="font-size:56px;">47<span style="font-size:26px;color:var(--ink-2);">m</span> 12<span style="font-size:26px;color:var(--ink-2);">s</span></div>
+            <div class="d">awake &amp; counting — noted, never judged</div>
+            <div class="best">day-one best · <b>1h 12m</b> — records only grow</div>
+          </div>
+          <div class="card">
+            <h4>Log the moment</h4>
+            <p class="sub">One tap. Every log sharpens the map — cigarettes count as data here, not failures.</p>
+            <div class="ql"><span>🚬 Had one</span><span class="r">💪 Rode it out</span><span class="d2">🙂 Decision</span><span class="u">🌊 Urge — help</span></div>
+          </div>
+          <div class="card">
+            <h4>Today's rituals — the map so far</h4>
+            <div class="tl">
+              <div class="item"><div class="rail"><div class="dot2 c"></div><div class="line"></div></div>
+                <div class="tx"><div class="t1"><small>7:02a</small>First of the day</div>
+                <div class="ctx"><i>with coffee</i><i>kitchen</i><i>~4 min</i></div></div></div>
+              <div class="item"><div class="rail"><div class="dot2 c"></div><div class="line"></div></div>
+                <div class="tx"><div class="t1"><small>8:15a</small>The drive</div>
+                <div class="ctx"><i>in the car</i><i>radio on</i></div></div></div>
+              <div class="item"><div class="rail"><div class="dot2"></div></div>
+                <div class="tx"><div class="t1"><small>8:54a</small>Cigarette</div>
+                <div class="ctx"><i>parking lot</i><i>before walking in</i><i>+ tap to add why</i></div></div></div>
+            </div>
+            <div class="mapline"><div class="bar"><i></i></div><b>3 moments · the map is filling in</b></div>
+          </div>
+          <div class="card">
+            <div class="bbline"><div class="mini-orb"></div>
+              <p>Two of your three so far had a <b>transition</b> right before them — coffee to day, car to door. I'm watching that.</p></div>
+            <span class="cta">Talk about this</span><span class="cta q">What fills the time instead?</span>
+          </div>
+        </div>
+        <div class="dock"><div class="in">Talk to Buddy…</div><div class="b send">↑</div><div class="b">🔇</div></div>
+      </div>
+      <p class="mode-tag">Same direction · Resistance phase</p>
+      <div class="phone short rphone">
+        <div class="head">
+          <div class="clock"><div class="t">4:52 PM</div><div class="d">Tue, Jul 14</div></div>
+          <span class="chip red"><span class="dot"></span>RESISTANCE</span>
+          <div class="spacer"></div><div class="buddy"><div class="n">Buddy</div><div class="s">right here</div></div><div class="orb coral"></div>
+        </div>
+        <div class="body">
+          <div class="hero" style="padding:6px 8px 4px;">
+            <div class="k">Holding for</div>
+            <div class="v" style="font-size:40px;">1<span style="font-size:19px;color:var(--ink-2);">h</span> 58<span style="font-size:19px;color:var(--ink-2);">m</span></div>
+            <div class="best">your best · <b>1h 12m</b> — you're past it right now</div>
+          </div>
+          <div class="wave"><span>🌊</span><p>This wave has been rising <b>4 min</b> — most break inside 15. Ride it with me?</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ DIRECTION B — MISSION HUD ══════════════ -->
+    <div class="col">
+      <p class="dir-label">Direction B</p>
+      <p class="dir-name">Mission HUD</p>
+      <p class="dir-sub">Leans into the Mission/Comms naming: a cockpit read-out. <b>Gauge hero</b> (gap vs personal best), status tiles, a <b>watched-window alert</b> (the JITAI idea made visible), and two command buttons.</p>
+      <div class="phone">
+        <div class="head">
+          <div class="clock"><div class="t">9:41 AM</div><div class="d">Tue, Jul 14 · Day 1</div></div>
+          <span class="chip"><span class="dot"></span>OBSERVATION</span>
+          <div class="spacer"></div>
+          <div class="buddy"><div class="n">Buddy</div><div class="s">listening</div></div>
+          <div class="orb"></div>
+        </div>
+        <div class="segrow">
+          <span class="aa"><span class="s">A</span><span class="track"><span class="th"></span></span><span class="l">A</span></span>
+          <div class="seg"><b class="on">Mission</b><b>Comms</b><b>Content</b></div>
+        </div>
+        <div class="body">
+          <div class="gauge">
+            <svg width="240" height="130" viewBox="0 0 240 130">
+              <path d="M 20 120 A 100 100 0 0 1 220 120" fill="none" stroke="#3a3a3c" stroke-width="10" stroke-linecap="round"/>
+              <path d="M 20 120 A 100 100 0 0 1 120 20" fill="none" stroke="#5b9fff" stroke-width="10" stroke-linecap="round" stroke-dasharray="205 315" stroke-dashoffset="47"/>
+              <circle cx="88" cy="26" r="7" fill="#5b9fff"/>
+            </svg>
+            <div class="num">
+              <div class="k" style="font-size:9px;letter-spacing:2px;color:var(--ink-2);text-transform:uppercase;font-weight:700;">Since last</div>
+              <div style="font-family:var(--mono);font-size:38px;font-weight:800;">0:47:12</div>
+              <div style="font-size:10px;color:var(--ink-2);">best today 1:12 — the marker to pass</div>
+            </div>
+          </div>
+          <div class="tiles">
+            <div class="tile"><div class="k">Today</div><div class="v">3</div><div class="d">logged · all context</div></div>
+            <div class="tile"><div class="k">Map</div><div class="v a">9%</div><div class="d">3 moments in</div></div>
+            <div class="tile"><div class="k">Ridden out</div><div class="v g">0</div><div class="d">first one's coming</div></div>
+          </div>
+          <div class="watch"><span class="ic">⏱</span><p><b>Watched window:</b> your logs put the next likely one <b>~10:15a</b> (post-meeting). Buddy will be paying attention with you.</p></div>
+          <div class="card">
+            <h4>Mission orders — day 1</h4>
+            <p class="sub">Just observe. Log every one, honestly, with a word of context. That's the whole mission today.</p>
+            <div class="mapline"><div class="bar"><i></i></div><b>3 / ~day of moments</b></div>
+          </div>
+          <div class="cmd"><span>📝 LOG A MOMENT</span><span class="urgent">🌊 URGE — HELP</span></div>
+        </div>
+        <div class="dock"><div class="in">Talk to Buddy…</div><div class="b send">↑</div><div class="b">🔇</div></div>
+      </div>
+      <p class="mode-tag">Same direction · Resistance phase</p>
+      <div class="phone short rphone">
+        <div class="head">
+          <div class="clock"><div class="t">4:52 PM</div><div class="d">Tue, Jul 14</div></div>
+          <span class="chip red"><span class="dot"></span>RESISTANCE</span>
+          <div class="spacer"></div><div class="buddy"><div class="n">Buddy</div><div class="s">right here</div></div><div class="orb coral"></div>
+        </div>
+        <div class="body">
+          <div class="streakrow">
+            <div class="tile"><div class="k">Holding</div><div class="v" style="color:var(--coral)">1:58</div><div class="d">vs best 1:12 ✓</div></div>
+            <div class="tile"><div class="k">Wave</div><div class="v a">4 min</div><div class="d">most break by 15</div></div>
+            <div class="tile"><div class="k">Ridden out</div><div class="v g">2</div><div class="d">this week</div></div>
+          </div>
+          <div class="cmd" style="margin-top:8px;"><span class="urgent">🌊 RIDE IT — RULE OF THREE</span><span>🚬 LOGGING ONE — NO GRADES</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ DIRECTION C — ONE BIG THING ══════════════ -->
+    <div class="col">
+      <p class="dir-label">Direction C</p>
+      <p class="dir-name">One Big Thing</p>
+      <p class="dir-sub">Radical focus for a day-1 brain: <b>the timer, one observation from BB, four log dots.</b> Nothing else — no empty charts on day 1. Depth lives in Comms; the dashboard is a presence, not a report.</p>
+      <div class="phone">
+        <div class="head">
+          <div class="clock"><div class="t">9:41 AM</div><div class="d">Tue, Jul 14 · Day 1</div></div>
+          <span class="chip"><span class="dot"></span>OBSERVATION</span>
+          <div class="spacer"></div>
+          <div class="buddy"><div class="n">Buddy</div><div class="s">listening</div></div>
+          <div class="orb"></div>
+        </div>
+        <div class="segrow">
+          <span class="aa"><span class="s">A</span><span class="track"><span class="th"></span></span><span class="l">A</span></span>
+          <div class="seg"><b class="on">Mission</b><b>Comms</b><b>Content</b></div>
+        </div>
+        <div class="body">
+          <div class="zen">
+            <div>
+              <div class="k">Since your last one</div>
+              <div class="v">47:12</div>
+              <div class="best">best so far · <b>1h 12m</b></div>
+            </div>
+            <p>Three logged since 7am. <b>Two came right after a transition</b> — coffee finished, car parked. Worth talking about?</p>
+            <span class="cta">Talk about this</span>
+            <div class="dots" title="Quick log"><span>🚬</span><span>💪</span><span>🙂</span><span>🌊</span></div>
+            <p style="font-size:10.5px;color:var(--ink-3);">had one · rode it out · decision · urge</p>
+          </div>
+        </div>
+        <div class="dock"><div class="in">Talk to Buddy…</div><div class="b send">↑</div><div class="b">🔇</div></div>
+      </div>
+      <p class="mode-tag">Same direction · Resistance phase</p>
+      <div class="phone short rphone">
+        <div class="head">
+          <div class="clock"><div class="t">4:52 PM</div><div class="d">Tue, Jul 14</div></div>
+          <span class="chip red"><span class="dot"></span>RESISTANCE</span>
+          <div class="spacer"></div><div class="buddy"><div class="n">Buddy</div><div class="s">right here</div></div><div class="orb coral"></div>
+        </div>
+        <div class="body">
+          <div class="zen" style="gap:8px;">
+            <div>
+              <div class="k">Holding for</div>
+              <div class="v" style="font-size:44px;color:var(--coral);">1:58:04</div>
+              <div class="best">already past your best · <b>1h 12m</b></div>
+            </div>
+            <p style="font-size:12px;">Wave's 4 minutes old. Most break by 15. <b>Breathe with me.</b></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

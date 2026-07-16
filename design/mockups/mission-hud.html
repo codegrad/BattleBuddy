@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mission HUD — full mockup (tap the phase chip)</title>
+<style>
+  :root {
+    --bg: #1c1c1e; --stage: #111113; --surface: #2c2c2e; --surface-2: #232326;
+    --border: #3a3a3c; --surface-light: #48484a;
+    --coral: #e8624a; --blue: #5b9fff; --green: #34c759; --amber: #ff9f0a;
+    --ink: #ffffff; --ink-2: #8e8e93; --ink-3: #636366;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  html, body { background: var(--stage); margin: 0; font-family: var(--font); color: var(--ink); }
+  .stage { display: flex; gap: 40px; justify-content: center; align-items: flex-start; padding: 30px 16px 60px; flex-wrap: wrap; }
+  .note { max-width: 300px; font-size: 13px; color: var(--ink-2); line-height: 1.6; }
+  .note h2 { color: var(--ink); font-size: 16px; margin: 0 0 8px; }
+  .note b { color: var(--ink); }
+  .note .pill { display: inline-block; background: var(--surface); border-radius: 999px; padding: 3px 10px; font-size: 11px; margin: 2px 2px 2px 0; }
+
+  .phone { width: 393px; height: 852px; background: var(--bg); border: 1px solid var(--border); border-radius: 40px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 22px 60px rgba(0,0,0,.55); position: relative; }
+
+  .head { display: flex; align-items: center; gap: 8px; padding: 18px 16px 6px; }
+  .clock { line-height: 1.15; }
+  .clock .t { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .clock .d { font-size: 9.5px; color: var(--ink-3); letter-spacing: .5px; text-transform: uppercase; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid rgba(91,159,255,.45); background: rgba(91,159,255,.1); color: var(--blue); font-size: 10px; font-weight: 700; letter-spacing: 1.3px; border-radius: 999px; padding: 5px 10px; cursor: pointer; user-select: none; }
+  .phone.res .chip { border-color: rgba(232,98,74,.55); background: rgba(232,98,74,.12); color: var(--coral); }
+  .chip .dot { width: 6px; height: 6px; border-radius: 3px; background: currentColor; }
+  .spacer { flex: 1; }
+  .buddy { text-align: right; line-height: 1.15; }
+  .buddy .n { font-size: 16px; font-weight: 700; }
+  .buddy .s { font-size: 11.5px; color: var(--ink-2); }
+  .orb { width: 24px; height: 24px; border-radius: 12px; background: var(--blue); margin-left: 8px; box-shadow: 0 0 0 3px rgba(91,159,255,.18); transition: background .4s, box-shadow .4s; }
+  .phone.res .orb { background: var(--coral); box-shadow: 0 0 0 3px rgba(232,98,74,.22); }
+
+  .segrow { display: flex; align-items: center; padding: 8px 16px 10px; gap: 8px; }
+  .aa { display: flex; align-items: center; gap: 5px; color: var(--ink-2); font-weight: 700; }
+  .aa .s { font-size: 9px; } .aa .l { font-size: 13px; }
+  .aa .track { width: 58px; height: 3px; border-radius: 2px; background: var(--surface-light); position: relative; }
+  .aa .th { position: absolute; left: 45%; top: -5px; width: 14px; height: 14px; border-radius: 7px; background: var(--coral); }
+  .seg { display: flex; background: var(--surface); border-radius: 999px; padding: 3px; gap: 2px; margin-left: auto; }
+  .seg b { font-size: 12px; padding: 6px 11px; border-radius: 999px; color: var(--ink-2); font-weight: 600; }
+  .seg b.on { background: var(--surface-light); color: var(--ink); }
+
+  .body { flex: 1; overflow-y: auto; padding: 4px 16px 14px; display: flex; flex-direction: column; gap: 11px; }
+
+  /* gauge */
+  .gauge { position: relative; width: 262px; height: 162px; margin: 2px auto 0; flex: none; }
+  .gauge .num { position: absolute; left: 0; right: 0; top: 76px; text-align: center; }
+  .gauge .k { font-size: 9.5px; letter-spacing: 2.2px; color: var(--ink-2); text-transform: uppercase; font-weight: 700; }
+  .gauge .v { font-family: var(--mono); font-size: 40px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.5px; }
+  .phone.res .gauge .v { color: var(--coral); }
+  .gauge .d { font-size: 10.5px; color: var(--ink-2); margin-top: 1px; }
+  .gauge .d b { color: var(--green); font-family: var(--mono); font-weight: 700; }
+
+  .tiles { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 9px; }
+  .tile { background: var(--surface-2); border: 1px solid var(--border); border-radius: 13px; padding: 10px 11px; }
+  .tile .k { font-size: 8.5px; letter-spacing: .9px; color: var(--ink-3); text-transform: uppercase; font-weight: 700; }
+  .tile .v { font-size: 19px; font-weight: 800; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .tile .v.g { color: var(--green); } .tile .v.a { color: var(--amber); } .tile .v.c { color: var(--coral); }
+  .tile .d { font-size: 9px; color: var(--ink-2); margin-top: 2px; line-height: 1.35; }
+
+  .watch { display: flex; align-items: flex-start; gap: 10px; background: rgba(255,159,10,.09); border: 1px solid rgba(255,159,10,.35); border-radius: 13px; padding: 11px 13px; }
+  .watch .ic { font-size: 16px; margin-top: 1px; }
+  .watch p { margin: 0; font-size: 12px; line-height: 1.5; }
+  .watch p b { color: var(--amber); }
+  .watch .talk { font-size: 10.5px; color: var(--coral); font-weight: 700; margin-top: 5px; display: inline-block; }
+
+  .wave { display: none; align-items: flex-start; gap: 10px; background: rgba(232,98,74,.1); border: 1px solid rgba(232,98,74,.45); border-radius: 13px; padding: 11px 13px; }
+  .phone.res .wave { display: flex; }
+  .phone.res .watch { display: none; }
+  .wave .ic { font-size: 16px; margin-top: 1px; }
+  .wave p { margin: 0; font-size: 12px; line-height: 1.5; }
+  .wave b { font-family: var(--mono); color: var(--coral); }
+
+  .card { background: rgba(35,35,38,.94); border: 1px solid var(--border); border-radius: 15px; padding: 12px 14px; }
+  .card h4 { margin: 0 0 3px; font-size: 14px; }
+  .card .sub { margin: 0; font-size: 11px; color: var(--ink-2); line-height: 1.5; }
+  .mapline { display: flex; align-items: center; gap: 9px; margin-top: 9px; }
+  .mapline .bar { flex: 1; height: 5px; border-radius: 3px; background: var(--surface-light); position: relative; overflow: hidden; }
+  .mapline .bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 9%; background: var(--blue); border-radius: 3px; }
+  .mapline b { font-size: 10.5px; color: var(--blue); white-space: nowrap; font-weight: 700; }
+
+  .cmd { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .cmd span { text-align: center; border-radius: 13px; padding: 13px 6px; font-size: 13px; font-weight: 800; letter-spacing: .4px; background: var(--surface); border: 1px solid var(--border); cursor: pointer; }
+  .cmd .urgent { background: rgba(232,98,74,.15); border-color: rgba(232,98,74,.6); color: var(--coral); }
+
+  /* observation-only / resistance-only blocks */
+  .obs-only { display: block; } .res-only { display: none; }
+  .phone.res .obs-only { display: none; } .phone.res .res-only { display: block; }
+  .tiles.res-only { display: none; } .phone.res .tiles.res-only { display: grid; }
+  .tiles.obs-only { display: grid; } .phone.res .tiles.obs-only { display: none; }
+
+  .dock { display: flex; gap: 8px; padding: 10px 14px 26px; border-top: 1px solid var(--border); align-items: center; }
+  .dock .in { flex: 1; background: var(--surface); border-radius: 20px; padding: 11px 15px; font-size: 13px; color: var(--ink-3); }
+  .dock .b { width: 40px; height: 40px; border-radius: 20px; background: var(--surface-light); display: flex; align-items: center; justify-content: center; font-size: 16px; }
+  .dock .b.send { background: var(--coral); color: #fff; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="note">
+    <h2>Mission HUD — chosen direction, full fidelity</h2>
+    <p><b>Tap the phase chip</b> (Observation / Resistance) to flip states. The timer ticks live.</p>
+    <p><b>Observation:</b> the gauge frames the gap <i>neutrally</i> against today's best; tiles report the map, not grades; the watched window is BB doing JITAI out loud; mission orders keep day 1 honest — "just observe."</p>
+    <p><b>Resistance:</b> same skeleton, coral: the gauge becomes "holding for", tiles flip to streak/wave/ridden-out, the watched window becomes the live wave timer, commands lead with the Rule of Three.</p>
+    <p>Day-1 data everywhere: 3 logs, map at 9%, no fake week-4 charts.</p>
+    <p class="pill">Hero: Time Since Last</p><p class="pill">AVE-safe: best shown beside</p><p class="pill">Wave timer: urges break in minutes</p><p class="pill">Watched window: JITAI visible</p>
+  </div>
+
+  <div class="phone" id="phone">
+    <div class="head">
+      <div class="clock"><div class="t" id="clock">9:41 AM</div><div class="d">Tue, Jul 14 · Day 1</div></div>
+      <span class="chip" id="chip" onclick="toggle()"><span class="dot"></span><span id="chipLabel">OBSERVATION</span></span>
+      <div class="spacer"></div>
+      <div class="buddy"><div class="n">Buddy</div><div class="s" id="bbState">listening</div></div>
+      <div class="orb"></div>
+    </div>
+    <div class="segrow">
+      <span class="aa"><span class="s">A</span><span class="track"><span class="th"></span></span><span class="l">A</span></span>
+      <div class="seg"><b class="on">Mission</b><b>Comms</b><b>Content</b></div>
+    </div>
+
+    <div class="body">
+      <div class="gauge">
+        <svg width="262" height="150" viewBox="0 0 262 150" style="margin-top:-4px;">
+          <path d="M 24 138 A 107 107 0 0 1 238 138" fill="none" stroke="#3a3a3c" stroke-width="11" stroke-linecap="round"/>
+          <path id="arc" d="M 24 138 A 107 107 0 0 1 238 138" fill="none" stroke="#5b9fff" stroke-width="11" stroke-linecap="round" stroke-dasharray="219 336" stroke-dashoffset="0"/>
+          <circle id="marker" cx="196" cy="42" r="5.5" fill="#34c759"/>
+        </svg>
+        <div class="num">
+          <div class="k" id="gaugeK">Since your last one</div>
+          <div class="v" id="timer">0:47:12</div>
+          <div class="d" id="gaugeD">today's best <b>1:12</b> — the marker to pass</div>
+        </div>
+      </div>
+
+      <div class="tiles obs-only">
+        <div class="tile"><div class="k">Today</div><div class="v">3</div><div class="d">moments logged, all with context</div></div>
+        <div class="tile"><div class="k">The map</div><div class="v a">9%</div><div class="d">3 moments in — filling</div></div>
+        <div class="tile"><div class="k">Ridden out</div><div class="v g">0</div><div class="d">first one's coming</div></div>
+      </div>
+      <div class="tiles res-only">
+        <div class="tile"><div class="k">Holding</div><div class="v c">1:58</div><div class="d">past best 1:12 ✓</div></div>
+        <div class="tile"><div class="k">This wave</div><div class="v a">4 min</div><div class="d">most break by 15</div></div>
+        <div class="tile"><div class="k">Ridden out</div><div class="v g">2</div><div class="d">this week — yours</div></div>
+      </div>
+
+      <div class="watch">
+        <span class="ic">⏱</span>
+        <div>
+          <p><b>Watched window:</b> from your three logs, the next likely one is <b>~10:15a</b> — right after your meeting ends. Buddy will be paying attention with you.</p>
+          <span class="talk">Talk about this →</span>
+        </div>
+      </div>
+      <div class="wave">
+        <span class="ic">🌊</span>
+        <div>
+          <p>This wave has been rising <b>4 min</b> — most break inside 15, every one so far has. You don't beat it, you outlast it.</p>
+          <span class="talk" style="display:inline-block;font-size:10.5px;color:var(--coral);font-weight:700;margin-top:5px;">Ride it with me →</span>
+        </div>
+      </div>
+
+      <div class="card obs-only">
+        <h4>Mission orders — day 1</h4>
+        <p class="sub">Just observe. Log every one, honestly, with a word of context — where you were, what came right before. That's the whole mission today. No quitting required yet.</p>
+        <div class="mapline"><div class="bar"><i></i></div><b>the map is filling in · 3 moments</b></div>
+      </div>
+      <div class="card res-only">
+        <h4>Right now</h4>
+        <p class="sub">Feet on the floor. One thing in the room you can hear. The wave is already cresting — and your record for riding them out only ever grows.</p>
+      </div>
+
+      <div class="cmd">
+        <span>📝 LOG A MOMENT</span>
+        <span class="urgent" id="cmdUrge">🌊 URGE — HELP</span>
+      </div>
+    </div>
+
+    <div class="dock"><div class="in">Talk to Buddy…</div><div class="b send">↑</div><div class="b">🔇</div></div>
+  </div>
+</div>
+
+<script>
+  const phone = document.getElementById('phone');
+  let res = false;
+  let obsSeconds = 47 * 60 + 12, resSeconds = 118 * 60 + 4;
+  function fmt(s) {
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return h + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+  }
+  function render() {
+    document.getElementById('timer').textContent = fmt(res ? resSeconds : obsSeconds);
+  }
+  function toggle() {
+    res = !res;
+    phone.classList.toggle('res', res);
+    document.getElementById('chipLabel').textContent = res ? 'RESISTANCE' : 'OBSERVATION';
+    document.getElementById('bbState').textContent = res ? 'right here' : 'listening';
+    document.getElementById('gaugeK').textContent = res ? 'Holding for' : 'Since your last one';
+    document.getElementById('gaugeD').innerHTML = res
+      ? 'past your best <b>1:12</b> — new record, live'
+      : "today's best <b>1:12</b> — the marker to pass";
+    document.getElementById('arc').setAttribute('stroke', res ? '#e8624a' : '#5b9fff');
+    document.getElementById('cmdUrge').textContent = res ? '🫁 RULE OF THREE' : '🌊 URGE — HELP';
+    render();
+  }
+  setInterval(() => { obsSeconds++; resSeconds++; render(); }, 1000);
+  render();
+  // ?res=1 opens in the resistance state (screenshot/deep-link convenience)
+  if (new URLSearchParams(location.search).get('res') === '1') toggle();
+</script>
+</body>
+</html>
