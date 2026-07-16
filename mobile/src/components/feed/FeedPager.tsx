@@ -108,6 +108,15 @@ export default function FeedPager({
       decelerationRate="fast"
       onViewableItemsChanged={onViewableItemsChanged}
       viewabilityConfig={viewabilityConfig}
+      // One page per item and every video card owns a live AVPlayer — without
+      // tight virtualization the whole library mounts at once (10 players),
+      // which is heavy in production and large enough to segfault the XCTest
+      // accessibility snapshotter in the simulator. Keep only the visible
+      // page and its neighbors alive.
+      initialNumToRender={2}
+      maxToRenderPerBatch={2}
+      windowSize={3}
+      removeClippedSubviews
       getItemLayout={(_, index) => ({
         length: pageHeight,
         offset: pageHeight * index,

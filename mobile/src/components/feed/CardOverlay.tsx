@@ -32,6 +32,8 @@ export default function CardOverlay({ text, onHelpedTap, helped, onTalkTap }: Ca
           style={[styles.helpedButton, helped && styles.helpedButtonActive]}
           onPress={onHelpedTap}
           activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={helped ? 'Helped' : 'This helped'}
         >
           <Ionicons
             name={helped ? 'heart' : 'heart-outline'}
@@ -44,7 +46,13 @@ export default function CardOverlay({ text, onHelpedTap, helped, onTalkTap }: Ca
           </Text>
         </TouchableOpacity>
         {onTalkTap && (
-          <TouchableOpacity style={styles.helpedButton} onPress={onTalkTap} activeOpacity={0.7}>
+          <TouchableOpacity
+            style={styles.helpedButton}
+            onPress={onTalkTap}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Talk about this"
+          >
             <Ionicons name="chatbubble-outline" size={22} color="rgba(255,255,255,0.9)" />
             <Text style={styles.helpedLabel}>Talk</Text>
           </TouchableOpacity>
