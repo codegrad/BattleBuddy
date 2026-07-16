@@ -65,7 +65,8 @@ export function loadDirectives() {
  * end of that day in the user's timezone — Railway runs UTC, and a directive
  * expiring "today" must not die at 7 PM Central. No expiry = always active. */
 export function isDirectiveActive(directive, timezone = 'America/Chicago') {
-  if (!directive || !directive.expires) return true;
+  if (!directive || directive.status === 'removed') return false;
+  if (!directive.expires) return true;
   try {
     const today = new Intl.DateTimeFormat('en-CA', {
       timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',

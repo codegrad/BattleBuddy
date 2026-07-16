@@ -107,6 +107,7 @@ function addDirective(text, expires) {
     text: trimmed,
     expires: expires || null,
     createdAt: new Date().toISOString(),
+    status: 'staged',
   };
   saveDirectives([...loadDirectives(), directive]);
   return directive;
@@ -493,13 +494,37 @@ export async function handleAdminConsole(req, res, { checkAdminSecret, CORS, sen
     }
 
     const directiveMatch = url.match(/^\/admin\/console\/directives\/([\w-]+)$/);
+    if (req.method === 'PATCH' && directiveMatch) {
+      const { status } = body;
+      const VALID = ['staged', 'active', 'removed'];
+      if (!VALID.includes(status)) return json(res, CORS, 400, { error: 'status must be staged | active | removed' });
+      const list = loadDirectives();
+      const idx = list.findIndex(d => d.id === directiveMatch[1]);
+      if (idx === -1) return json(res, CORS, 404, { error: 'Directive not found.' });
+      const extra = status === 'active' ? { activatedAt: new Date().toISOString() }
+                  : status === 'removed' ? { removedAt: new Date().toISOString() }
+                  : {};
+      list[idx] = { ...list[idx], status, ...extra };
+      saveDirectives(list);
+      console.log(`[AdminConsole] Directive ${directiveMatch[1]} → ${status}`);
+      return json(res, CORS, 200, { ok: true, directive: { ...list[idx], active: isDirectiveActive(list[idx]) } });
+    }
+
     if (req.method === 'DELETE' && directiveMatch) {
       const list = loadDirectives();
-      const remaining = list.filter(d => d.id !== directiveMatch[1]);
-      if (remaining.length === list.length) return json(res, CORS, 404, { error: 'Directive not found.' });
-      saveDirectives(remaining);
-      console.log(`[AdminConsole] Directive deleted: ${directiveMatch[1]}`);
-      return json(res, CORS, 200, { ok: true });
+      const idx = list.findIndex(d => d.id === directiveMatch[1]);
+      if (idx === -1) return json(res, CORS, 404, { error: 'Directive not found.' });
+      const d = list[idx];
+      if (d.status === 'active') {
+        // Soft-delete: mark removed so it stops being injected but keeps a tombstone
+        list[idx] = { ...d, status: 'removed', removedAt: new Date().toISOString() };
+        saveDirectives(list);
+        console.log(`[AdminConsole] Directive ${d.id} soft-deleted (active → removed)`);
+        return json(res, CORS, 200, { ok: true, softDeleted: true });
+      }
+      saveDirectives(list.filter(x => x.id !== d.id));
+      console.log(`[AdminConsole] Directive ${d.id} deleted`);
+      return json(res, CORS, 200, { ok: true, softDeleted: false });
     }
 
     // ─── Design loop (runs in-process; no dependence on a dev machine) ─────

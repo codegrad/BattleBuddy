@@ -68,6 +68,11 @@
   .card .dtext { font-size: 13px; line-height: 1.45; margin-top: 2px; overflow-wrap: anywhere; }
   .badge { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; padding: 1px 7px; border-radius: 8px; border: 1px solid var(--border); color: var(--dim); flex-shrink: 0; }
   .badge.live { color: var(--green); border-color: rgba(52,199,89,.4); }
+  .badge.staged-badge { color: var(--accent); border-color: rgba(232,98,74,.4); }
+  .badge.removed-badge { color: var(--dim); border-color: var(--border); opacity: .6; }
+  .dir-filter { display:flex; align-items:center; gap:10px; padding:8px 14px; border-bottom:1px solid var(--border); flex-shrink:0; }
+  .dir-filter #dir-summary { font-size:12px; color:var(--dim); }
+  .dir-filter .btn.active-filter { color: var(--accent); border-color: rgba(232,98,74,.4); }
   .add-form { border-top: 1px solid var(--border); padding: 12px; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
   .add-form h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); }
   .add-form .frow { display: flex; gap: 8px; }
@@ -287,6 +292,10 @@
   <!-- ─── Directives ─── -->
   <section class="tab list-tab" id="tab-directives">
     <div class="list-col" style="flex:1; border-right:none; width:auto; max-width:720px; margin:0 auto;">
+      <div class="dir-filter">
+        <span id="dir-summary"></span>
+        <button class="btn" id="dir-hide-active" style="margin-left:auto">Hide active</button>
+      </div>
       <div class="list-scroll" id="dir-list"></div>
       <div class="add-form">
         <h3>Add directive</h3>
@@ -683,31 +692,111 @@ $('res-add').onclick = async () => {
 };
 
 // ─── Directives tab ──────────────────────────────────────────────────────────
+let dirHideActive = false;
+
+$(‘dir-hide-active’).onclick = () => {
+  dirHideActive = !dirHideActive;
+  $(‘dir-hide-active’).classList.toggle(‘active-filter’, dirHideActive);
+  $(‘dir-hide-active’).textContent = dirHideActive ? ‘Show active’ : ‘Hide active’;
+  loadDirectives();
+};
+
 async function loadDirectives() {
   try {
-    const { directives } = await api('/admin/console/directives');
-    const list = $('dir-list');
-    if (!directives.length) { list.innerHTML = '<div class="empty">No directives. Short instructions added here are injected at the very top of BB’s prompt and override conflicting guidance.</div>'; return; }
-    const sorted = [...directives].sort((x, y) => (y.active - x.active) || (y.createdAt || '').localeCompare(x.createdAt || ''));
-    list.innerHTML = sorted.map(d => `
-      <div class="card ${d.active ? '' : 'expired'}" data-id="${d.id}">
+    const { directives } = await api(‘/admin/console/directives’);
+    const list = $(‘dir-list’);
+
+    // Normalise: pre-status directives default to ‘staged’ if they’re not expired
+    const all = directives.map(d => ({ ...d, status: d.status || (d.active ? ‘staged’ : ‘expired’) }));
+    const staged  = all.filter(d => d.status === ‘staged’);
+    const active  = all.filter(d => d.status === ‘active’);
+    const removed = all.filter(d => d.status === ‘removed’);
+
+    const stagedCount = staged.length, activeCount = active.length, removedCount = removed.length;
+    $(‘dir-summary’).textContent =
+      `${stagedCount} staged · ${activeCount} active · ${removedCount} removed`;
+
+    const visible = dirHideActive
+      ? [...staged, ...removed]
+      : [...staged, ...active, ...removed];
+
+    if (!visible.length && !all.length) {
+      list.innerHTML = ‘<div class="empty">No directives. Short instructions added here are injected at the very top of BB\’s prompt and override conflicting guidance.</div>’;
+      return;
+    }
+    if (!visible.length) {
+      list.innerHTML = ‘<div class="empty">All directives are active — toggle "Show active" to see them.</div>’;
+      return;
+    }
+
+    const dateStr = iso => iso ? new Date(iso).toLocaleDateString() : ‘—‘;
+    list.innerHTML = visible.map(d => {
+      const isStaged  = d.status === ‘staged’;
+      const isActive  = d.status === ‘active’;
+      const isRemoved = d.status === ‘removed’;
+      const badgeCls  = isStaged ? ‘staged-badge’ : isActive ? ‘live’ : ‘removed-badge’;
+      const badgeTxt  = isStaged ? ‘staged’ : isActive ? ‘active’ : ‘removed’;
+      const cardCls   = isRemoved ? ‘card expired’ : ‘card’;
+
+      const actionBtns = isStaged
+        ? `<button class="btn dir-done" style="font-size:11px;padding:2px 8px" title="Mark as implemented — hides from default view">Mark done</button>
+           <button class="del" title="Delete">✕</button>`
+        : isActive
+        ? `<button class="del" title="Remove directive from BB">✕</button>`
+        : `<button class="btn dir-reapply" style="font-size:11px;padding:2px 8px" title="Re-apply this directive">Re-apply</button>
+           <button class="del" title="Delete permanently">✕</button>`;
+
+      const sub = isRemoved
+        ? `removed ${dateStr(d.removedAt)} · originally added ${dateStr(d.createdAt)}`
+        : isActive
+        ? `implemented ${dateStr(d.activatedAt)} · added ${dateStr(d.createdAt)}${d.expires ? ‘ · expires ‘ + d.expires : ‘’}`
+        : `added ${dateStr(d.createdAt)}${d.expires ? ‘ · through ‘ + d.expires : ‘’}`;
+
+      return `<div class="${cardCls}" data-id="${escapeHtml(d.id)}" data-status="${d.status}">
         <div class="row1">
-          <span class="badge ${d.active ? 'live' : ''}">${d.active ? 'active' : 'expired'}</span>
-          <button class="del" title="Delete">✕</button>
+          <span class="badge ${badgeCls}">${badgeTxt}</span>
+          ${actionBtns}
         </div>
         <div class="dtext">${escapeHtml(d.text)}</div>
-        <div class="sub">${d.expires ? (d.active ? 'through ' : 'expired ') + d.expires + ' · ' : ''}added ${d.createdAt ? new Date(d.createdAt).toLocaleDateString() : '—'}</div>
-      </div>`).join('');
-    list.querySelectorAll('.card').forEach(card => {
-      card.querySelector('.del').onclick = async () => {
+        <div class="sub">${sub}</div>
+      </div>`;
+    }).join(‘’);
+
+    list.querySelectorAll(‘.card’).forEach(card => {
+      const id = card.dataset.id;
+      const cardStatus = card.dataset.status;
+
+      card.querySelector(‘.del’)?.addEventListener(‘click’, async () => {
+        const msg = cardStatus === ‘active’
+          ? ‘Remove this directive from BB? It will stop being injected and be kept as a tombstone you can re-apply.’
+          : cardStatus === ‘removed’
+          ? ‘Permanently delete this removed directive?’
+          : ‘Delete this staged directive?’;
+        if (!confirm(msg)) return;
         try {
-          await api('/admin/console/directives/' + card.dataset.id, { method: 'DELETE' });
-          status('Directive removed.', 'ok');
+          const r = await api(‘/admin/console/directives/’ + id, { method: ‘DELETE’ });
+          status(r.softDeleted ? ‘Directive removed from BB.’ : ‘Directive deleted.’, ‘ok’);
           loadDirectives();
-        } catch (e) { status(e.message, 'err'); }
-      };
+        } catch (e) { status(e.message, ‘err’); }
+      });
+
+      card.querySelector(‘.dir-done’)?.addEventListener(‘click’, async () => {
+        try {
+          await api(‘/admin/console/directives/’ + id, { method: ‘PATCH’, body: JSON.stringify({ status: ‘active’ }) });
+          status(‘Marked as implemented.’, ‘ok’);
+          loadDirectives();
+        } catch (e) { status(e.message, ‘err’); }
+      });
+
+      card.querySelector(‘.dir-reapply’)?.addEventListener(‘click’, async () => {
+        try {
+          await api(‘/admin/console/directives/’ + id, { method: ‘PATCH’, body: JSON.stringify({ status: ‘staged’ }) });
+          status(‘Directive re-applied.’, ‘ok’);
+          loadDirectives();
+        } catch (e) { status(e.message, ‘err’); }
+      });
     });
-  } catch (e) { status('Failed to load directives: ' + e.message, 'err'); }
+  } catch (e) { status(‘Failed to load directives: ‘ + e.message, ‘err’); }
 }
 // ─── Insights tab ────────────────────────────────────────────────────────────
 function repSection(title, items, cls = '', reportId = '') {
