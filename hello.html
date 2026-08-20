@@ -4,6 +4,42 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hello from Builder</title>
+<style>
+  html, body {
+    height: 100%;
+    margin: 0;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1.25rem;
+    background-color: #eef4fb;
+    color: #1f2933;
+    font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    text-align: center;
+  }
+  h1 {
+    margin: 0;
+    font-size: clamp(2rem, 6vw, 3.25rem);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  button {
+    font: inherit;
+    font-size: 1rem;
+    padding: 0.65rem 1.4rem;
+    border: 1px solid #c3d4e8;
+    border-radius: 999px;
+    background-color: #ffffff;
+    color: inherit;
+    cursor: pointer;
+  }
+  button:hover {
+    background-color: #f7fbff;
+  }
+</style>
 </head>
 <body>
 <h1>Hello from Builder</h1>
