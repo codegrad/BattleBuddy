@@ -1,0 +1,63 @@
+NOTES.txt — schema.sql (PostgreSQL 15)
+
+SCOPE
+Delivered exactly the objects requested: tables client, product, rate,
+usage_record, deal_event, change_log; trigger function log_change() attached to
+client, product, rate, deal_event; function rate_as_of(uuid, date). Supporting
+enum types, constraints and indexes are included because the tables cannot be
+defined coherently without them. No seed data, no roles/grants, no RLS, no
+migration framework wrapper.
+
+DECISIONS MADE WITHIN LATITUDE
+1. rate_as_of(uuid, date) signature interpretation. The spec gives one uuid, but
+   a rate is scoped by both client and product. Decision: the uuid is the
+   CLIENT id and the function returns the client's full effective rate card as
+   of the date (one row per product), rather than a single scalar. Resolution
+   order: client-specific rate wins over the product list price; among ties, the
+   latest effective_from wins.
+2. rate model. rate rows with client_id IS NULL are the product list price;
+   rows with client_id set are client overrides. This is what makes a single-uuid
+   lookup well-defined.
+3. Validity periods are half-open date ranges [effective_from, effective_to),
+   effective_to NULL = open-ended. Enforced by a btree_gist EXCLUDE constraint
+   (rate_no_overlap) keyed on product_id, COALESCE(client_id, nil-uuid),
+   currency and the daterange, so two rates can never both be in force for the
+   same product/client/currency on the same day.
+4. change_log stores full old/new row images as jsonb plus table_name, row_id,
+   operation, changed_at, changed_by (current_user) and txid. log_change() is an
+   AFTER ... FOR EACH ROW trigger, returns NULL, and skips no-op UPDATEs where
+   the row image is unchanged. row_id is read out of the jsonb 'id' key, so the
+   function is generic across all four audited tables.
+5. change_log itself is NOT audited (would recurse) and usage_record is NOT
+   audited — neither was listed, and usage_record is modelled as append-only.
+6. Money: numeric(18,6) for unit rates and quantities, numeric(18,2) for deal
+   amounts. currency is char(3) with an ISO-4217-shaped CHECK; no currency table.
+7. usage_record.usage_date is a STORED generated column ((occurred_at AT TIME
+   ZONE 'UTC')::date) for date-bucketed rollups.
+8. Idempotency/uniqueness for ingestion: UNIQUE (client_id, source, external_id)
+   on usage_record. Postgres treats NULL external_id as distinct, so manual rows
+   without an external id are not blocked.
+9. Delete behaviour: usage_record FKs are ON DELETE RESTRICT (billing history
+   must not vanish); rate and deal_event cascade from their parent.
+
+DEPENDENCY A REVIEWER SHOULD CONFIRM
+- The file runs CREATE EXTENSION IF NOT EXISTS btree_gist, required by the
+  rate_no_overlap exclusion constraint. This is contrib, present in stock
+  PostgreSQL 15 installs and on RDS/Cloud SQL, but it needs privileges to
+  install. If extensions are not permitted in the target environment, drop the
+  rate_no_overlap constraint and enforce non-overlap in application code or a
+  BEFORE trigger; nothing else in the file depends on it.
+- gen_random_uuid() is core in PostgreSQL 13+, so pgcrypto is not needed.
+
+VERIFICATION PERFORMED
+schema.sql was applied end to end against a live PostgreSQL server with
+ON_ERROR_STOP=1 (single clean transaction, no errors or warnings), then smoke
+tested: inserts/updates across all four audited tables produced the expected
+change_log rows (client INSERT+UPDATE, product INSERT, rate INSERT x2,
+deal_event INSERT); rate_as_of() returned the client override (7.50) inside the
+override window and fell back to the list price (10.00) after it expired; and an
+overlapping rate insert was correctly rejected by rate_no_overlap.
+Caveat: the only server binary available in this environment was PostgreSQL 16,
+not 15. Every construct used is PostgreSQL 15 syntax (identity columns, STORED
+generated columns, EXCLUDE USING gist, jsonb, EXECUTE FUNCTION) with no 16-only
+features, but the run was on 16.
