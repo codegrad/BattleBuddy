@@ -32,16 +32,21 @@ CREATE TABLE product (
     id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
     code        text        NOT NULL UNIQUE,
     name        text        NOT NULL,
+    type        text        NOT NULL DEFAULT 'subscription',
     unit        text        NOT NULL DEFAULT 'unit',
     is_active   boolean     NOT NULL DEFAULT true,
     metadata    jsonb       NOT NULL DEFAULT '{}'::jsonb,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT product_code_not_blank CHECK (btrim(code) <> ''),
-    CONSTRAINT product_name_not_blank CHECK (btrim(name) <> '')
+    CONSTRAINT product_name_not_blank CHECK (btrim(name) <> ''),
+    CONSTRAINT product_type_valid CHECK (
+        type IN ('subscription', 'usage', 'one_time', 'addon', 'service', 'bundle')
+    )
 );
 
 CREATE INDEX product_is_active_idx ON product (is_active);
+CREATE INDEX product_type_idx      ON product (type);
 
 -- ---------------------------------------------------------------------------
 -- rate — dated price history per product; [effective_from, effective_to)
@@ -50,6 +55,7 @@ CREATE INDEX product_is_active_idx ON product (is_active);
 CREATE TABLE rate (
     id             uuid          PRIMARY KEY DEFAULT gen_random_uuid(),
     product_id     uuid          NOT NULL REFERENCES product (id) ON DELETE CASCADE,
+    rate_type      text          NOT NULL DEFAULT 'per_unit',
     unit_amount    numeric(18,6) NOT NULL,
     currency       char(3)       NOT NULL DEFAULT 'USD',
     effective_from date          NOT NULL,
@@ -57,6 +63,9 @@ CREATE TABLE rate (
     created_at     timestamptz   NOT NULL DEFAULT now(),
     updated_at     timestamptz   NOT NULL DEFAULT now(),
     CONSTRAINT rate_unit_amount_nonneg CHECK (unit_amount >= 0),
+    CONSTRAINT rate_type_valid CHECK (
+        rate_type IN ('flat', 'per_unit', 'tiered', 'volume', 'package')
+    ),
     CONSTRAINT rate_currency_valid     CHECK (currency ~ '^[A-Z]{3}$'),
     CONSTRAINT rate_period_ordered     CHECK (effective_to IS NULL OR effective_to > effective_from),
     CONSTRAINT rate_no_overlap EXCLUDE USING gist (
