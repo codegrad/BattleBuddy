@@ -4,7 +4,8 @@
 -- Coverage:
 --   client        — all three statuses
 --   product       — all six types, one per type
---   rate          — all five rate_types, plus a two-row price history on one product
+--   rate          — all six rate_types, a two-row price history, and a
+--                   three-band tiered product
 --   usage_record  — 8 metered rows spanning clients/products/sources
 --   deal_event    — 5 lifecycle events
 --   change_log    — populated by log_change(); 2 UPDATEs and 1 DELETE at the end
@@ -41,32 +42,36 @@ INSERT INTO product (id, code, name, type, unit, is_active, metadata) VALUES
      '{"includes": ["CORE-PLAT", "SEAT-ADDON"]}');
 
 -- ---------------------------------------------------------------------------
--- rate — all five rate_types; API-CALLS carries a two-period price history.
--- The rate_no_overlap exclusion constraint keeps at most one rate in force
--- per product at any date, so history rows are strictly consecutive.
+-- rate — all six rate_types; API-CALLS carries a two-period price history and
+-- SEAT-ADDON carries three concurrent quantity bands. The rate_no_overlap
+-- exclusion constraint keeps bands disjoint per product and date range.
 -- ---------------------------------------------------------------------------
-INSERT INTO rate (id, product_id, rate_type, unit_amount, currency, effective_from, effective_to) VALUES
+INSERT INTO rate (id, product_id, rate_type, unit_amount, tier_from, tier_to, currency, effective_from, effective_to) VALUES
     -- flat: fixed monthly platform fee
     ('4a000000-0000-4000-8000-000000000001', 'b2000000-0000-4000-8000-000000000001',
-     'flat',      499.000000, 'USD', DATE '2026-01-01', NULL),
+     'flat',      499.000000,   0, NULL, 'USD', DATE '2026-01-01', NULL),
     -- per_unit, historical period (superseded)
     ('4a000000-0000-4000-8000-000000000002', 'b2000000-0000-4000-8000-000000000002',
-     'per_unit',    0.004000, 'USD', DATE '2025-01-01', DATE '2026-01-01'),
+     'per_unit',    0.004000,   0, NULL, 'USD', DATE '2025-01-01', DATE '2026-01-01'),
     -- per_unit, current period
     ('4a000000-0000-4000-8000-000000000003', 'b2000000-0000-4000-8000-000000000002',
-     'per_unit',    0.003500, 'USD', DATE '2026-01-01', NULL),
+     'per_unit',    0.003500,   0, NULL, 'USD', DATE '2026-01-01', NULL),
     -- package: one-time onboarding sold as a single package
     ('4a000000-0000-4000-8000-000000000004', 'b2000000-0000-4000-8000-000000000003',
-     'package',  2500.000000, 'USD', DATE '2025-07-01', NULL),
-    -- tiered: per-seat price for the tier the account sits in
+     'package',  2500.000000,   0, NULL, 'USD', DATE '2025-07-01', NULL),
+    -- tiered: three concurrent seat bands, entry band first
     ('4a000000-0000-4000-8000-000000000005', 'b2000000-0000-4000-8000-000000000004',
-     'tiered',     18.000000, 'USD', DATE '2026-01-01', NULL),
-    -- volume: hourly services price once volume threshold is met
+     'tiered',     22.000000,   0,   25, 'USD', DATE '2026-01-01', NULL),
+    ('4a000000-0000-4000-8000-000000000008', 'b2000000-0000-4000-8000-000000000004',
+     'tiered',     18.000000,  25,  100, 'USD', DATE '2026-01-01', NULL),
+    ('4a000000-0000-4000-8000-000000000009', 'b2000000-0000-4000-8000-000000000004',
+     'tiered',     14.000000, 100, NULL, 'USD', DATE '2026-01-01', NULL),
+    -- volume: hourly services price, single open band
     ('4a000000-0000-4000-8000-000000000006', 'b2000000-0000-4000-8000-000000000005',
-     'volume',    165.000000, 'USD', DATE '2026-02-01', NULL),
-    -- flat: retired bundle, closed period
+     'volume',    165.000000,   0, NULL, 'USD', DATE '2026-02-01', NULL),
+    -- percent: retired bundle billed as a revenue share, stored as a fraction
     ('4a000000-0000-4000-8000-000000000007', 'b2000000-0000-4000-8000-000000000006',
-     'flat',      750.000000, 'USD', DATE '2025-03-01', DATE '2026-03-01');
+     'percent',     0.150000,   0, NULL, 'USD', DATE '2025-03-01', DATE '2026-03-01');
 
 -- ---------------------------------------------------------------------------
 -- usage_record

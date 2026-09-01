@@ -57,6 +57,8 @@ CREATE TABLE rate (
     product_id     uuid          NOT NULL REFERENCES product (id) ON DELETE CASCADE,
     rate_type      text          NOT NULL DEFAULT 'per_unit',
     unit_amount    numeric(18,6) NOT NULL,
+    tier_from      numeric(18,6) NOT NULL DEFAULT 0,
+    tier_to        numeric(18,6),
     currency       char(3)       NOT NULL DEFAULT 'USD',
     effective_from date          NOT NULL,
     effective_to   date,
@@ -64,12 +66,29 @@ CREATE TABLE rate (
     updated_at     timestamptz   NOT NULL DEFAULT now(),
     CONSTRAINT rate_unit_amount_nonneg CHECK (unit_amount >= 0),
     CONSTRAINT rate_type_valid CHECK (
-        rate_type IN ('flat', 'per_unit', 'tiered', 'volume', 'package')
+        rate_type IN ('flat', 'per_unit', 'tiered', 'volume', 'package', 'percent')
+    ),
+    -- Percent rates are stored as a fraction of the billed base (0.15 = 15%),
+    -- never as whole percentage points.
+    CONSTRAINT rate_percent_is_fraction CHECK (
+        rate_type <> 'percent' OR (unit_amount > 0 AND unit_amount <= 1)
+    ),
+    CONSTRAINT rate_tier_bounds CHECK (
+        tier_from >= 0 AND (tier_to IS NULL OR tier_to > tier_from)
+    ),
+    -- Only banded pricing spans multiple rows per product; every other
+    -- rate_type occupies the single unbounded band [0, inf).
+    CONSTRAINT rate_tiers_only_when_banded CHECK (
+        rate_type IN ('tiered', 'volume')
+        OR (tier_from = 0 AND tier_to IS NULL)
     ),
     CONSTRAINT rate_currency_valid     CHECK (currency ~ '^[A-Z]{3}$'),
     CONSTRAINT rate_period_ordered     CHECK (effective_to IS NULL OR effective_to > effective_from),
+    -- One rate per product per (quantity band, date range): banded pricing
+    -- may hold several concurrent rows so long as the bands are disjoint.
     CONSTRAINT rate_no_overlap EXCLUDE USING gist (
         product_id WITH =,
+        numrange(tier_from, tier_to, '[)') WITH &&,
         daterange(effective_from, effective_to, '[)') WITH &&
     )
 );
@@ -187,7 +206,9 @@ CREATE TRIGGER deal_event_change_log
     FOR EACH ROW EXECUTE FUNCTION log_change();
 
 -- ---------------------------------------------------------------------------
--- rate_as_of(product_id, as_of) — the unit amount in force on a given date
+-- rate_as_of(product_id, as_of) — the unit amount in force on a given date.
+-- For banded (tiered/volume) pricing this returns the entry band [0, ...);
+-- band selection by quantity is a caller concern.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION rate_as_of(p_product_id uuid, p_as_of date)
 RETURNS numeric
@@ -197,6 +218,7 @@ AS $$
     SELECT r.unit_amount
     FROM rate r
     WHERE r.product_id = p_product_id
+      AND r.tier_from = 0
       AND r.effective_from <= p_as_of
       AND (r.effective_to IS NULL OR r.effective_to > p_as_of)
     ORDER BY r.effective_from DESC

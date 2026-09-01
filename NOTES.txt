@@ -1,0 +1,153 @@
+NOTES — billing schema (schema.sql / seed.sql / validate.sql)
+============================================================
+
+Scope note: these three files are a self-contained PostgreSQL 15 billing core
+(client, product, rate, usage_record, deal_event, change_log). They were built
+to an explicit request and are NOT wired into the BattleBuddy app schema under
+supabase/migrations/. Nothing in the app reads them yet.
+
+------------------------------------------------------------
+1. Decisions taken inside prompt latitude
+------------------------------------------------------------
+The prompts fixed the object names and the shape of the seed/validation, but
+left the column-level design open. What was chosen, and why:
+
+1.1  Identity and keys
+     - uuid primary keys with gen_random_uuid() (built into PG 15; no pgcrypto).
+     - change_log.id is a bigint IDENTITY column, not a uuid: it is an
+       append-only log where insertion order is the useful ordering.
+     - Seed rows use fixed, human-readable uuid literals so validate.sql can
+       assert against specific rows without depending on generated values.
+
+1.2  Enumerations as CHECK constraints, not ENUM types
+     client.status, product.type, rate.rate_type and deal_event.event_type are
+     text + CHECK. Rationale: adding a value is a constraint change rather than
+     an ALTER TYPE that cannot run inside some migration paths, and the values
+     stay legible in change_log's jsonb images. Cost: no type-level reuse
+     across tables.
+
+1.3  rate is dated, half-open, and non-overlapping
+     Periods are [effective_from, effective_to), effective_to NULL = in force.
+     rate_no_overlap (EXCLUDE USING gist, requires btree_gist) makes an
+     overlapping price physically impossible rather than merely discouraged.
+
+1.4  Money and quantities
+     numeric(18,6) throughout; currency is char(3) with a '^[A-Z]{3}$' CHECK
+     rather than an FK to a currency table (out of scope). deal_event allows a
+     NULL amount but requires a currency whenever an amount is present.
+
+1.5  usage_record is idempotent, not audited
+     A UNIQUE idempotency_key lets a meter replay a batch safely. usage_record
+     deliberately carries NO log_change() trigger: it is the highest-volume
+     table and auditing it would roughly double write volume for little value.
+     The prompt asked for triggers on client/product/rate/deal_event only;
+     validate.sql pins that absence so it stays a decision, not an oversight.
+
+1.6  log_change() behaviour
+     - AFTER row trigger on client, product, rate, deal_event.
+     - Whole-row before/after images as jsonb (to_jsonb(OLD)/to_jsonb(NEW)).
+     - No-op UPDATEs (old IS NOT DISTINCT FROM new) are skipped, so the log
+       records real changes only.
+     - record_id is extracted as (new|old)->>'id'::uuid, which works because
+       every audited table has a uuid 'id'. A future audited table without one
+       would silently log NULL — see 3.2.
+     - changed_by defaults to current_user. There is no app-level actor
+       column; adding one would mean a session GUC (e.g. app.actor_id).
+
+1.7  rate_as_of(uuid, date)
+     Signature was fixed by the prompt, so it takes product_id and a date and
+     returns the unit_amount in force, NULL before the first period. With
+     banded pricing (1.8) it returns the entry band [0, ...); choosing a band
+     by quantity is left to the caller, since the signature has nowhere to
+     pass a quantity. STABLE, SQL, so it inlines.
+
+1.8  Two columns added in response to later prompts
+     The seed prompt asked for product types and five rate_type values, and
+     the validation prompt asked for percent and tier checks. Neither existed
+     in the first cut of schema.sql, so schema.sql was extended rather than
+     the checks being made vacuous:
+     - product.type       — subscription, usage, one_time, addon, service, bundle
+     - rate.rate_type     — flat, per_unit, tiered, volume, package, percent
+       (this makes SIX rate types; the first delivery described five, before
+       'percent' was requested)
+     - rate.tier_from / rate.tier_to — half-open quantity bands, so tiered and
+       volume pricing can hold several concurrent rows per product. The
+       exclusion constraint now keys on (product_id, quantity band, date
+       range); rate_tiers_only_when_banded pins every other rate_type to the
+       single unbounded band [0, inf).
+     - Percent rates are stored as a FRACTION (0.15 = 15%), enforced by
+       rate_percent_is_fraction. This is the single most common source of
+       silent 100x billing errors, so it is a constraint, not a convention.
+
+1.9  seed.sql specifics
+     Fictional names only. The first draft's UPDATE flipped a client from
+     suspended to active, which quietly destroyed status coverage; it was
+     changed to a metadata re-segmentation so the seeded set still spans
+     active / suspended / churned after the mutations run.
+
+1.10 validate.sql specifics
+     Runs in a READ ONLY transaction, so it cannot modify what it audits.
+     Set coverage is asserted with array containment both ways rather than
+     array equality, which would be collation-dependent. Output is one
+     "name PASS/FAIL detail" line per check, with the observed values in the
+     detail so a failure is diagnosable without re-querying.
+
+------------------------------------------------------------
+2. Verification actually performed
+------------------------------------------------------------
+schema.sql, then seed.sql, then validate.sql were loaded into a clean
+PostgreSQL cluster on this machine. All 9 checks report PASS. The exclusion
+constraint was separately confirmed to reject an overlapping rate period.
+Note the cluster available here is PostgreSQL 16, not 15; nothing in these
+files uses post-15 syntax, but they have not been run on 15 itself.
+
+------------------------------------------------------------
+3. Reviewer concerns — read before building on this
+------------------------------------------------------------
+3.1  No RLS, no grants. BattleBuddy's CLAUDE.md requires row-level security on
+     every table. These tables have none, and change_log in particular is a
+     plaintext audit trail readable by anyone with table access. RLS plus an
+     explicit revoke on change_log writes is required before this goes near a
+     Supabase project.
+
+3.2  log_change() assumes a uuid 'id'. Attaching it to a table with a
+     composite or non-uuid key logs record_id = NULL, or raises on cast. Guard
+     it before reusing the trigger elsewhere.
+
+3.3  change_log stores whole-row images, including anything sensitive a future
+     column might hold (client.metadata is free-form jsonb today). There is no
+     redaction, no retention policy, and no partitioning — it grows without
+     bound. Decide retention before this sees production volume.
+
+3.4  A percent rate has no base. rate_type = 'percent' says "a fraction of
+     something" but the schema does not record of what. Revenue-share billing
+     needs an explicit base reference before it can be computed.
+
+3.5  Tier semantics are unstated. The bands are structurally sound, but the
+     schema does not say whether tiered pricing is graduated (each band priced
+     separately) or flat-rate-by-band, and tiered vs volume are structurally
+     identical here — they differ only by intent. Pin this down in the billing
+     engine, and consider a comment or constraint that encodes the answer.
+
+3.6  rate_as_of() ignores quantity, so it cannot price a banded product
+     correctly on its own. Anything that bills tiered/volume products needs a
+     second function; the fixed (uuid, date) signature was a prompt constraint,
+     not a design conclusion.
+
+3.7  No client-specific pricing. rate hangs off product only, so negotiated
+     per-client rates have nowhere to live. Adding a nullable rate.client_id
+     later also means revisiting the exclusion constraint (NULL is not equal
+     to NULL under =, so overrides would not conflict with list prices as
+     written).
+
+3.8  usage_record has no FK to a rate or a billing period, and nothing
+     prevents usage dated outside any rate period — such rows price as NULL
+     and would need handling in the billing engine.
+
+3.9  No updated_at trigger. updated_at defaults to now() but is only correct
+     because seed.sql sets it explicitly on UPDATE. Either add a touch trigger
+     or treat the column as advisory.
+
+3.10 validate.sql hard-codes the seed's expected counts and two seed uuids. It
+     validates THIS seed, not arbitrary data; it will fail (correctly, but
+     noisily) against any other dataset.
