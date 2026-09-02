@@ -1,0 +1,99 @@
+NOTES — WR-203A (ledger schema, routes, contract) — revision 2
+
+WHAT CHANGED IN THIS REVISION
+
+1. SESSION IS NOW VERIFIED, NOT DECODED. My own concern #1 from revision 1 is fixed, not
+   documented. decodeSession() is gone. Both routes now call
+   verifySession(token, env.SESSION_SECRET) from _lib/session.js and take builder_id ONLY
+   from the verified result. A missing cookie, a bad signature, a verifier that throws, a
+   verifier that returns null, or a verified session with no builder id all take the same
+   path: 401 {"ok":false,"error":"no_builder_session"}. The forged-cookie read is closed —
+   a hand-written sp_session no longer resolves to any builder.
+2. SPLIT INTO PAGES FUNCTIONS. ledger.js is withdrawn. The logic now ships as two route
+   files, functions/api/v1/ledger/balance.js and functions/api/v1/ledger/entries.js, each
+   exporting onRequestGet(context) and reading { request, env } off the context. The
+   default fetch router, the URL matching, and my 405/404 handlers are all deleted —
+   method and path dispatch belong to the platform now, not to these files.
+3. ROW CAP 200. ENTRIES_LIMIT is 200, was 100. CONTRACT.md §5 states the cap.
+4. more:false IS SURFACED. The entries envelope is { ok, entries, more } with more always
+   false in v1. CONTRACT.md §5 tells clients to read the field rather than assume it, so a
+   later cursor cannot silently truncate a client that ignored it.
+5. THE THREE NOTES ARE NOW CONTRACT. Single-currency balance, the created_at format with
+   the parsing line, and the same-second id tiebreak moved out of this file and into
+   CONTRACT.md §9 as documented v1 behavior.
+
+LATITUDE DECISIONS STILL IN FORCE (unchanged from revision 1 unless marked)
+
+1. Runtime: Cloudflare Pages Functions + D1 (env.DB). D1 inferred from the SQLite schema in
+   the same WR; the Pages mount shape is now ruled cargo, not inference.
+2. 401 error string: "no_builder_session". The contract names the field, not its value;
+   CONTRACT.md §6 tells clients to branch on ok, not on the error text.
+3. entries ordering: created_at DESC, id DESC. NEW: cap now 200 per the ruling.
+4. Schema unchanged: builder_id, room_id, wr_id, amount and kind NOT NULL; currency and
+   created_at NOT NULL with the specified defaults. A ledger row missing its builder or
+   amount is not a row worth keeping.
+5. Index named idx_ledger_entry_builder_id, created IF NOT EXISTS to match the table.
+
+NEW LATITUDE DECISIONS IN THIS REVISION
+
+6. IMPORT PATH — the one thing a reviewer should check before deploy. The ruling named the
+   module as "_lib/session.js" but not where _lib sits. I placed it at functions/_lib/, so
+   from functions/api/v1/ledger/ the import is:
+       import { verifySession } from '../../../_lib/session.js';
+   If _lib actually lives at functions/api/v1/_lib/, the fix is one line in each of the two
+   route files: change '../../../_lib/session.js' to '../_lib/session.js'. Nothing else
+   depends on the path. This is a build-time resolution error if wrong, not a silent one.
+7. VERIFIER CONTRACT ASSUMED. verifySession is called with await and its result read as
+   session.builder_id (session.builderId accepted as an alias). Both a thrown error and a
+   null/undefined return are treated as failure. If the real verifier returns the builder
+   id as a bare string rather than an object, verifiedBuilderId() needs one added line; the
+   401 path is already correct for every failure mode.
+8. HELPERS DUPLICATED ON PURPOSE. json(), unauthorized(), readCookie() and
+   verifiedBuilderId() appear in both route files rather than in a third shared module.
+   Two self-contained files drop in with no new path convention to agree on. If the
+   platform prefers a shared helper, they lift cleanly into _lib/.
+
+CONCERNS A REVIEWER SHOULD STILL SEE
+
+1. SESSION TRUST — CLOSED. Fixed in this revision, see change #1 above. Left listed so the
+   revision-1 concern is not read as still open.
+2. NO PAGINATION AT 200. A builder past 200 entries still sees only the most recent 200.
+   more:false is now on the wire, so the shape has room for a cursor, but the value is
+   hardcoded false and does not yet report truncation. If a builder can realistically
+   exceed 200 entries, v2 needs a real cursor and more must start telling the truth.
+3. MIXED CURRENCY — accepted for v1 and now written into CONTRACT.md §9. The schema still
+   permits a non-SPC row that would be summed into the SPC total. Constraining currency in
+   the schema, or making balance per-currency, is a v2 change to the §4 shape.
+4. STUB VS LIVE SHAPE. The fixture in CONTRACT.md §8 carries only wr_id, amount and kind;
+   live entries also carry id, room_id and created_at, and the envelope carries more. §8
+   says so explicitly, but the two work requests are being built in parallel, so it is
+   worth a reviewer's eye.
+5. created_at format and 6. same-second id tiebreak — accepted for v1 and moved into
+   CONTRACT.md §9 as documented behavior.
+
+APPEND-ONLY FOOTING (as required)
+
+- ledger_entry.sql contains only CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS.
+  No ALTER, no DROP, no UPDATE, no DELETE anywhere in the file.
+- balance.js and entries.js are SELECT-only. No INSERT, UPDATE, DELETE, or schema statement
+  in either file.
+- Corrections are appended as kind="adjust" rows; a negative adjust amount lowers a balance.
+
+VERIFICATION RUN
+
+Both onRequestGet handlers were exercised against a stubbed context — a stub D1 binding, a
+stub SESSION_SECRET, and a stub verifySession:
+
+  verifier returns {builder_id:"b1"}
+    balance -> 200 {"ok":true,"builder_id":"b1","balance":50,"currency":"SPC"}
+    entries -> 200 {"ok":true,"entries":[{id,room_id,wr_id,amount,kind,created_at}],"more":false}
+  no sp_session cookie            -> 401 {"ok":false,"error":"no_builder_session"}
+  verifier throws (bad signature) -> 401 {"ok":false,"error":"no_builder_session"}
+  verifier returns null           -> 401 {"ok":false,"error":"no_builder_session"}
+  verifier returns {} (no id)     -> 401 {"ok":false,"error":"no_builder_session"}
+  forged cookie sp_session={"builder_id":"b2"} -> 401 (never reaches the query)
+  builder with no rows            -> 200 balance:0 / entries:[] with more:false
+  entries binds LIMIT 200
+
+The SQL was not run against a live D1 instance; none was available in this room. The import
+of _lib/session.js was resolved against a stub at the path in decision #6 — see that note.
